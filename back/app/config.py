@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     dict_api_key: str = ""
+    deepl_api_key: str = ""
     cors_origins: list[str] = ["http://localhost:5173"]
 
 
