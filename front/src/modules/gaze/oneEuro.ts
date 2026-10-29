@@ -1,7 +1,7 @@
 /**
  * One Euro Filter (Casiez et al., 2012).
  * 가만히 볼 때는 강하게 평활화(떨림 제거), 빠르게 움직일 때는 약하게(지연 최소화).
- * WebGazer 원시 출력은 프레임마다 수십 px씩 튀므로 필수.
+ * 웹캠 시선 원시 출력은 프레임마다 수십 px씩 튀므로 필수.
  */
 export interface OneEuroOptions {
   minCutoff: number;

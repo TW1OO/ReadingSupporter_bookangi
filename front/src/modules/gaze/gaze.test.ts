@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { OneEuroFilter } from './oneEuro';
 import { DwellDetector } from './dwell';
 import { distanceToRect, groupLineRects, pickNearest } from './regionMapper';
-import { buildPoints, gradeFromError, percentile, summarizeValidation } from './calibration';
+import { VALIDATION_GRID, buildPoints, gradeFromError, percentile, summarizeValidation } from './calibration';
 
 const OPTS = { minDurationMs: 700, maxDispersionPx: 140, releaseRadiusPx: 180, windowMs: 2000 };
 
@@ -92,13 +92,27 @@ describe('regionMapper', () => {
 describe('calibration', () => {
   it('점이 화면 안쪽 여백을 지킨다', () => {
     const pts = buildPoints(1000, 600);
-    expect(pts).toHaveLength(9);
+    expect(pts).toHaveLength(13);
     for (const p of pts) {
       expect(p.x).toBeGreaterThanOrEqual(40);
       expect(p.x).toBeLessThanOrEqual(960);
       expect(p.y).toBeGreaterThanOrEqual(40);
       expect(p.y).toBeLessThanOrEqual(560);
     }
+  });
+  it('검증 점은 보정 점과 겹치지 않고 충분히 떨어져 있다', () => {
+    const cal = buildPoints(1000, 600);
+    const val = buildPoints(1000, 600, VALIDATION_GRID);
+    for (const v of val) {
+      const nearest = Math.min(...cal.map((c) => Math.hypot(c.x - v.x, c.y - v.y)));
+      expect(nearest).toBeGreaterThan(100);
+    }
+  });
+  it('격자 네 칸의 중심 점은 인접 격자점의 한가운데다', () => {
+    const pts = buildPoints(1000, 600, undefined, 0);
+    const at = (x: number, y: number) => pts.find((p) => p.x === x && p.y === y);
+    expect(at(290, 180)).toBeDefined(); // (0.08,0.1)·(0.5,0.5) 사이 칸의 중심
+    expect(at(710, 420)).toBeDefined();
   });
   it('등급 경계', () => {
     expect(gradeFromError(50)).toBe('excellent');
@@ -109,7 +123,7 @@ describe('calibration', () => {
   it('percentile', () => {
     expect(percentile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 90)).toBe(9);
   });
-  it('일정한 쏠림은 bias로 잡히고 보정하면 오차가 줄어든다', () => {
+  it('일정한 쏠림은 bias로 잡힌다', () => {
     const samples = [];
     for (let i = 0; i < 20; i++) {
       samples.push({ targetX: 500, targetY: 300, gazeX: 540 + (i % 2) * 6, gazeY: 270 });
@@ -117,7 +131,21 @@ describe('calibration', () => {
     const r = summarizeValidation(samples);
     expect(r.bias.dx).toBeCloseTo(43, 0);
     expect(r.bias.dy).toBeCloseTo(-30, 0);
-    expect(r.meanErrorAfterBiasPx).toBeLessThan(r.meanErrorPx);
-    expect(r.biasWorthApplying).toBe(true);
+  });
+  it('정확도는 점별 중앙 위치 기준이라 떨림이 빠진다', () => {
+    // 목표 바로 위에서 좌우로 ±60px 떨리는 시선: 샘플별 오차는 60px이지만 중앙 위치는 목표와 같다
+    const samples = Array.from({ length: 20 }, (_, i) => ({
+      targetX: 500, targetY: 300, gazeX: 500 + (i % 2 ? 60 : -60), gazeY: 300,
+    }));
+    const r = summarizeValidation(samples);
+    expect(r.meanErrorPx).toBeCloseTo(60, 6);
+    expect(r.accuracyPx).toBeCloseTo(0, 6);
+  });
+  it('정확도는 목표점마다 구해 평균한다', () => {
+    const samples = [
+      ...Array.from({ length: 5 }, () => ({ targetX: 100, targetY: 100, gazeX: 130, gazeY: 140 })), // 50px
+      ...Array.from({ length: 50 }, () => ({ targetX: 500, targetY: 300, gazeX: 510, gazeY: 300 })), // 10px
+    ];
+    expect(summarizeValidation(samples).accuracyPx).toBeCloseTo(30, 6); // 샘플 수가 아니라 점 단위 평균
   });
 });

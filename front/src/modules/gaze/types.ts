@@ -53,7 +53,9 @@ export type GazeInputEvent =
       durationMs: number;
       region: GazeRegion | null;
     }
-  | { type: 'gaze.quality'; t: number; faceDetected: boolean };
+  | { type: 'gaze.quality'; t: number; faceDetected: boolean }
+  /** 보정 시작 때의 자세에서 벗어났는지(ok=false면 hints를 사용자에게 보여 준다). 자세를 아는 추정기에서만 발행 */
+  | { type: 'gaze.posture'; t: number; ok: boolean; hints: string[] };
 
 export type GazeListener = (e: GazeInputEvent) => void;
 
@@ -76,14 +78,15 @@ export interface GazeOptions {
   faceLostMs: number;
   /** 마우스 이동은 학습에서 제외하고, 클릭만 학습 데이터로 쓴다 */
   implicitClickTraining: boolean;
-  /** WebGazer 학습 데이터를 IndexedDB에 저장해 다음 방문 때 재사용 */
+  /** 보정 학습 데이터를 저장해 다음 방문 때 재사용 (부스처럼 사용자가 바뀌면 끈다) */
   persistTraining: boolean;
 }
 
 export const DEFAULT_OPTIONS: GazeOptions = {
   root: null,
   maxEmitHz: 30,
-  smoothing: { minCutoff: 0.6, beta: 0.006, dCutoff: 1.0 },
+  // beta는 px/s 속도에 곱해진다. 시선 좌표는 프레임마다 수십 px 튀어서 beta가 크면 그 튐 때문에 필터가 열려 버린다.
+  smoothing: { minCutoff: 0.6, beta: 0.001, dCutoff: 1.0 },
   dwell: {
     minDurationMs: 700,
     maxDispersionPx: 140, // x범위+y범위 합. 오차 ~100px를 감안해 넉넉히
@@ -93,5 +96,5 @@ export const DEFAULT_OPTIONS: GazeOptions = {
   regionTolerancePx: 70,
   faceLostMs: 800,
   implicitClickTraining: true,
-  persistTraining: true,
+  persistTraining: false, // 부스: 방문자마다 보정하므로 이전 사람의 학습 데이터를 불러오지 않는다
 };
