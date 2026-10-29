@@ -1,8 +1,10 @@
-import type { WebGazerApi } from 'webgazer';
 import { OneEuro2D } from './oneEuro';
 import { DwellDetector } from './dwell';
 import { resolveRegion } from './regionMapper';
 import type { ValidationSample } from './calibration';
+import type { TrainSample } from './linearGaze';
+import { MediaPipeBackend, type RawGaze } from './mediapipeBackend';
+import { checkDrift, postureDrift, type Pose, type PostureDrift } from './framing';
 import {
   DEFAULT_OPTIONS,
   type GazeInputEvent,
@@ -12,45 +14,13 @@ import {
   type GazeStatus,
 } from './types';
 
-
-let scriptPromise: Promise<WebGazerApi> | null = null;
-
-function loadWebGazer(): Promise<WebGazerApi> {
-  const w = window as unknown as { webgazer?: WebGazerApi };
-  if (w.webgazer) return Promise.resolve(w.webgazer);
-  if (!scriptPromise) {
-    scriptPromise = new Promise<WebGazerApi>((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = `${import.meta.env.BASE_URL}webgazer.js`;
-      s.async = true;
-      s.onload = () =>
-        w.webgazer
-          ? resolve(w.webgazer)
-          : reject(new Error('webgazer.js는 로드됐지만 window.webgazer가 없습니다.'));
-      s.onerror = () => reject(new Error('webgazer.js를 불러오지 못했습니다. npm install 후 서버를 다시 시작하세요.'));
-      document.head.appendChild(s);
-    }).catch((e) => {
-      scriptPromise = null; // 재시도 가능
-      throw e;
-    });
-  }
-  return scriptPromise;
-}
-
-const OFFSET_KEY = 'bookangi.gaze.offset.v1';
-
-interface StoredOffset {
-  dx: number;
-  dy: number;
-  w: number;
-  h: number;
-  at: number;
-}
+/** 검증 중 목표점마다 이 간격으로 학습 샘플을 따로 모아 둔다(검증이 끝나면 재학습에 쓴다). */
+const VALIDATION_CAPTURE_MS = 300;
 
 /**
- * WebGazer 위에 얹은 "프리미엄" 시선 파이프라인.
+ * MediaPipe 시선 추정 위에 얹은 시선 파이프라인.
  *
- *   WebGazer raw → 뷰포트 클램프 → One Euro 스무딩 → 편향 보정 →
+ *   추정기 raw → 뷰포트 클램프 → One Euro 스무딩 →
  *   (머무름 감지 / 문단·줄 매핑) → InputEvent
  *
  * 손 모듈과 서로 모른다. 바깥으로는 GazeInputEvent만 내보낸다.
@@ -58,12 +28,11 @@ interface StoredOffset {
 export class GazeController {
   private opts: GazeOptions;
   private listeners = new Set<GazeListener>();
-  private wg: WebGazerApi | null = null;
+  private backend = new MediaPipeBackend();
   private status: GazeStatus = 'idle';
 
   private filter: OneEuro2D;
   private dwell: DwellDetector;
-  private offset = { dx: 0, dy: 0 };
 
   private lastEmitAt = 0;
   private lastRegionAt = 0;
@@ -72,10 +41,15 @@ export class GazeController {
   private region: GazeRegion | null = null;
   private pendingParagraph: { id: string | null; count: number } = { id: null, count: 0 };
 
-  /** 바이어스 적용 전 평활 좌표 (검증용) */
+  /** 마지막 평활 좌표 (검증용) */
   private lastSmoothed: { x: number; y: number; t: number } | null = null;
   private clickHandler: ((e: MouseEvent) => void) | null = null;
+  private referencePose: Pose | null = null;
+  private postureTimer: number | null = null;
+  private postureOk = true;
   private calibrating = false;
+  /** 검증 중 모은 학습 샘플. 검증 오차를 정직하게 재려고 측정이 끝날 때까지 모델에 넣지 않는다. */
+  private validationSamples: TrainSample[] = [];
 
   constructor(options: Partial<GazeOptions> = {}) {
     this.opts = {
@@ -86,7 +60,6 @@ export class GazeController {
     };
     this.filter = new OneEuro2D(this.opts.smoothing);
     this.dwell = new DwellDetector(this.opts.dwell);
-    this.loadOffset();
   }
 
   /* ---------- 구독 ---------- */
@@ -110,10 +83,6 @@ export class GazeController {
     return this.status;
   }
 
-  getOffset() {
-    return { ...this.offset };
-  }
-
   setRoot(el: HTMLElement | null) {
     this.opts.root = el;
   }
@@ -129,37 +98,21 @@ export class GazeController {
     if (this.status === 'ready' || this.status === 'loading') return;
     this.setStatus('loading');
     try {
-      // Vite로 번들하지 않고 완성본(/webgazer.js)을 <script>로 로드 → window.webgazer
-      const wg = await loadWebGazer();
-      this.wg = wg;
-      // 얼굴 모델 파일 위치 (기본값 './mediapipe/face_mesh'는 페이지 기준 상대경로라 깨진다)
-      wg.params.faceMeshSolutionPath = `${import.meta.env.BASE_URL}mediapipe/face_mesh`;
-
-      wg.setRegression('ridge');
-      wg.saveDataAcrossSessions?.(this.opts.persistTraining);
-      wg.applyKalmanFilter?.(false); // 필터링은 우리 파이프라인이 담당
-      wg.showVideoPreview?.(false);
-      wg.showPredictionPoints?.(false);
-      wg.showFaceOverlay?.(false);
-      wg.showFaceFeedbackBox?.(false);
-
-      wg.setGazeListener((data) => this.handleRaw(data));
       this.lastFaceAt = performance.now();
-      await wg.begin();
+      await this.backend.start((p) => this.handleRaw(p), {
+        persistTraining: this.opts.persistTraining,
+      });
 
-      // WebGazer는 begin() 안에서 click/mousemove 리스너를 등록한다.
-      // 마우스 위치를 "시선 정답"으로 학습하면 회귀 모델이 오염되므로 begin 이후에 반드시 제거.
-      wg.removeMouseEventListeners?.();
       if (this.opts.implicitClickTraining) {
         // 읽기 중 단어를 클릭할 때는 그 단어를 보고 있다고 가정하고 클릭만 학습 (보정 중에는 제외)
         this.clickHandler = (e) => {
-          if (!this.calibrating) wg.recordScreenPosition?.(e.clientX, e.clientY, 'click');
+          if (!this.calibrating) this.backend.addTrainingPoint(e.clientX, e.clientY);
         };
         window.addEventListener('click', this.clickHandler, true);
       }
-      wg.showPredictionPoints?.(false);
       this.setPreview(false);
 
+      this.startPostureMonitor();
       this.setStatus('ready');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -171,31 +124,77 @@ export class GazeController {
 
   pause() {
     if (this.status !== 'ready') return;
-    this.wg?.pause();
+    this.backend.pause();
     this.setStatus('paused');
   }
 
   async resume() {
     if (this.status !== 'paused') return;
-    await this.wg?.resume();
+    await this.backend.resume();
     this.setStatus('ready');
   }
 
   stop() {
+    this.stopPostureMonitor();
+    this.referencePose = null;
     if (this.clickHandler) {
       window.removeEventListener('click', this.clickHandler, true);
       this.clickHandler = null;
     }
-    try {
-      this.wg?.end();
-    } catch {
-      /* 이미 종료됨 */
-    }
-    this.wg = null;
+    this.backend.stop();
     this.filter.reset();
     this.dwell.reset();
     this.region = null;
     this.setStatus('idle');
+  }
+
+  /* ---------- 카메라 프레이밍(자세) ---------- */
+
+  getPose(): Pose | null {
+    return this.backend.getPose();
+  }
+
+  /** 미리보기의 시작 가능 구역 색 (자세가 좋으면 초록) */
+  setGuideState(ok: boolean) {
+    this.backend.setGuide(ok);
+  }
+
+  /** 지금 자세를 기준으로 삼는다. 얼굴이 안 잡혀 있으면 false */
+  captureReference(): boolean {
+    const p = this.getPose();
+    if (!p) return false;
+    this.referencePose = p;
+    this.postureOk = true;
+    return true;
+  }
+
+  clearReference() {
+    this.referencePose = null;
+  }
+
+  /** 기준 자세 대비 현재 자세 이동량. 기준이나 얼굴이 없으면 null */
+  getDrift(): PostureDrift | null {
+    const cur = this.getPose();
+    return this.referencePose && cur ? postureDrift(this.referencePose, cur) : null;
+  }
+
+  private startPostureMonitor() {
+    if (this.postureTimer !== null) return;
+    // 상태가 바뀔 때만 이벤트를 낸다 (읽는 동안 자세가 흐트러지면 앱이 안내할 수 있다)
+    this.postureTimer = window.setInterval(() => {
+      const d = this.getDrift();
+      if (!d) return;
+      const c = checkDrift(d);
+      if (c.ok !== this.postureOk) {
+        this.postureOk = c.ok;
+        this.emit({ type: 'gaze.posture', t: performance.now(), ok: c.ok, hints: c.hints });
+      }
+    }, 500);
+  }
+
+  private stopPostureMonitor() {
+    if (this.postureTimer !== null) window.clearInterval(this.postureTimer);
+    this.postureTimer = null;
   }
 
   /* ---------- 보정 / 검증 ---------- */
@@ -205,33 +204,19 @@ export class GazeController {
     this.calibrating = on;
   }
 
-  /**
-   * 카메라 미리보기(영상 + 얼굴 인식 상자) 표시. 얼굴 위치/조명 확인용.
-   * 주의: showVideoPreview(true)는 이전에 false로 둔 값을 되살리지 못하므로 개별 호출한다.
-   */
+  /** 카메라 미리보기 표시. 얼굴 위치/조명 확인용. */
   setPreview(visible: boolean) {
-    const wg = this.wg;
-    if (!wg) return;
-    wg.showVideo?.(visible);
-    wg.showFaceOverlay?.(visible);
-    wg.showFaceFeedbackBox?.(visible);
-    const box = document.getElementById('webgazerVideoContainer');
-    if (box) {
-      box.style.zIndex = '9500'; // 보정 오버레이(9000) 위
-      box.style.left = 'auto';
-      box.style.right = '24px';
-      box.style.top = '24px';
-    }
+    this.backend.setPreview(visible);
   }
 
   /** 보정 점을 사용자가 클릭할 때마다 호출: 시선↔화면 좌표 학습 데이터 추가 */
   recordCalibrationClick(x: number, y: number) {
-    this.wg?.recordScreenPosition?.(x, y, 'click');
+    this.backend.addTrainingPoint(x, y);
   }
 
   /**
    * 한 목표점에 대한 시선 샘플 수집. settle 동안은 버리고 collect 동안만 모은다.
-   * (편향 보정 전 좌표를 쓴다 → 새 bias를 정확히 계산)
+   * 같은 시간에 이 목표점의 학습 샘플도 따로 모아 둔다(commitValidationTraining에서 사용).
    */
   measureTarget(
     x: number,
@@ -242,11 +227,19 @@ export class GazeController {
       const samples: ValidationSample[] = [];
       const startAt = performance.now() + settleMs;
       const endAt = startAt + collectMs;
+      let lastCaptureAt = 0;
       const timer = window.setInterval(() => {
         const now = performance.now();
         const s = this.lastSmoothed;
         if (s && now >= startAt && now - s.t < 150) {
           samples.push({ targetX: x, targetY: y, gazeX: s.x, gazeY: s.y });
+        }
+        if (now >= startAt && now - lastCaptureAt >= VALIDATION_CAPTURE_MS) {
+          const t = this.backend.capturePoint(x, y);
+          if (t) {
+            this.validationSamples.push(t);
+            lastCaptureAt = now;
+          }
         }
         if (now >= endAt) {
           window.clearInterval(timer);
@@ -256,61 +249,25 @@ export class GazeController {
     });
   }
 
-  applyBias(bias: { dx: number; dy: number }) {
-    // 이미 적용된 offset 위에 누적하지 않도록, 측정은 offset 적용 전 좌표 기준 → 대체
-    this.offset = { dx: -bias.dx, dy: -bias.dy };
-    this.saveOffset();
-  }
-
-  clearBias() {
-    this.offset = { dx: 0, dy: 0 };
-    try {
-      localStorage.removeItem(OFFSET_KEY);
-    } catch {
-      /* ignore */
-    }
+  /**
+   * 검증 점들도 정답을 아는 데이터다. 검증 오차를 잰 뒤 모델에 합쳐 다시 학습한다.
+   * 보정 점(13곳) 사이의 빈 위치가 채워져 일반화가 좋아지고, 남아 있던 쏠림도 같이 줄어든다.
+   */
+  commitValidationTraining() {
+    this.backend.addSamples(this.validationSamples);
+    this.validationSamples = [];
   }
 
   async resetTraining() {
-    this.clearBias();
-    await this.wg?.clearData?.();
+    this.validationSamples = [];
+    await this.backend.clearData();
     this.filter.reset();
     this.dwell.reset();
   }
 
-  private loadOffset() {
-    try {
-      const raw = localStorage.getItem(OFFSET_KEY);
-      if (!raw) return;
-      const s = JSON.parse(raw) as StoredOffset;
-      const sameSize =
-        Math.abs(s.w - window.innerWidth) / s.w < 0.1 &&
-        Math.abs(s.h - window.innerHeight) / s.h < 0.1;
-      if (sameSize && Date.now() - s.at < 1000 * 60 * 60 * 12) {
-        this.offset = { dx: s.dx, dy: s.dy };
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  private saveOffset() {
-    try {
-      const s: StoredOffset = {
-        ...this.offset,
-        w: window.innerWidth,
-        h: window.innerHeight,
-        at: Date.now(),
-      };
-      localStorage.setItem(OFFSET_KEY, JSON.stringify(s));
-    } catch {
-      /* ignore */
-    }
-  }
-
   /* ---------- 파이프라인 ---------- */
 
-  private handleRaw(data: { x: number; y: number } | null) {
+  private handleRaw(data: RawGaze | null) {
     const now = performance.now();
 
     if (!data || !Number.isFinite(data.x) || !Number.isFinite(data.y)) {
@@ -336,8 +293,8 @@ export class GazeController {
     const sm = this.filter.filter(rawX, rawY, now);
     this.lastSmoothed = { x: sm.x, y: sm.y, t: now };
 
-    const x = Math.min(w, Math.max(0, sm.x + this.offset.dx));
-    const y = Math.min(h, Math.max(0, sm.y + this.offset.dy));
+    const x = Math.min(w, Math.max(0, sm.x));
+    const y = Math.min(h, Math.max(0, sm.y));
 
     const dwellEvent = this.dwell.push({ x, y, t: now });
 

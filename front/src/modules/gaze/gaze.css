@@ -48,12 +48,11 @@
 .gz-stat dt { color: #b9ab90; }
 .gz-stat dd { margin: 0; font-variant-numeric: tabular-nums; }
 
-.gz-debug-dot {
-  position: fixed; left: 0; top: 0; width: 28px; height: 28px; margin: -14px 0 0 -14px;
-  border-radius: 50%; pointer-events: none; z-index: 8000;
-  border: 2px solid rgba(224, 164, 88, 0.95);
-  background: rgba(224, 164, 88, 0.18);
-  will-change: transform;
+/* 시선 잔상: 저해상도 캔버스를 화면 크기로 늘려 부드럽게 번지게 한다.
+   multiply로 겹쳐 주황이 글자 위에 와도 글자는 진하게 남는다. */
+.gz-heat {
+  position: fixed; left: 0; top: 0; width: 100vw; height: 100vh;
+  pointer-events: none; z-index: 7998; mix-blend-mode: multiply;
 }
 .gz-debug-line {
   position: fixed; pointer-events: none; z-index: 7999;
@@ -64,3 +63,13 @@
   padding: 6px 12px; border-radius: 999px; font-size: 13px;
   background: #2a231b; color: #f3ead9; border: 1px solid #4a3d2e;
 }
+
+/* 카메라 프레이밍 안내 */
+.gz-frame { margin: 12px 0 0; font-size: 15px; color: #e0a458; }
+.gz-frame--ok { color: #7fd18b; }
+.gz-warn {
+  position: fixed; top: 48px; left: 50%; transform: translateX(-50%); z-index: 9100;
+  padding: 6px 14px; border-radius: 8px; background: #7a2e1d; color: #fbe9e1; font-size: 14px;
+}
+.gz-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.gz-frame-debug { margin: 4px 0 0; font-size: 12px; color: #8a7f6a; font-variant-numeric: tabular-nums; }
