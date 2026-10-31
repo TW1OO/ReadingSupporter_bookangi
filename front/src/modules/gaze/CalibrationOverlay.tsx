@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { GazeController } from './GazeController';
 import {
+  FINISH_MODE_LABEL_KO,
   GRADE_LABEL_KO,
+  RECHECK_GRID,
   VALIDATION_GRID,
   buildPoints,
+  formatReport,
   summarizeValidation,
+  type CalibrationReport,
+  type FinishMode,
   type ValidationResult,
   type ValidationSample,
 } from './calibration';
@@ -24,26 +29,39 @@ const CLICKS_PER_POINT = 4;
 const FRAMING_STABLE_MS = 800;
 /** 자세 맞추기가 안 풀려도 이 시간이 지나면 그대로 시작할 수 있게 한다(부스 흐름을 막지 않기 위해) */
 const FRAMING_OVERRIDE_MS = 6000;
+const MODE_KEY = 'bookangi.gaze.finishMode';
 
-type Phase = 'intro' | 'calibrate' | 'validate' | 'result';
+type Phase = 'intro' | 'calibrate' | 'validate' | 'recheck' | 'result';
 
 interface Props {
   controller: GazeController;
-  onDone: (result: ValidationResult) => void;
+  onDone: (report: CalibrationReport) => void;
   onCancel: () => void;
 }
 
+function loadMode(): FinishMode {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'bias' ? 'bias' : 'retrain';
+  } catch {
+    return 'retrain';
+  }
+}
+
 /**
- * 자세 맞추기 → 13점 클릭 보정 → 4점 검증(정확도 측정) → 검증 점까지 합쳐 재학습.
+ * 자세 맞추기 → 13점 클릭 보정 → 검증 1(4점) → 마무리(재학습 또는 쏠림 보정) → 검증 2(새 4점) → 결과.
  * 보정 점은 "바라보면서 4번 클릭". 클릭 위치는 실제 마우스 좌표가 아니라 점의 중심을 학습시킨다.
+ * 검증 2는 보정·검증 1과 겹치지 않는 위치라서 두 마무리 방식의 효과를 공정하게 비교할 수 있다.
  */
 export function CalibrationOverlay({ controller, onDone, onCancel }: Props) {
   const [phase, setPhase] = useState<Phase>('intro');
   const [idx, setIdx] = useState(0);
   const [clicks, setClicks] = useState(0);
   const [measuring, setMeasuring] = useState(false);
-  const [result, setResult] = useState<ValidationResult | null>(null);
-  const [samples, setSamples] = useState<ValidationSample[]>([]);
+  const [mode, setMode] = useState<FinishMode>(loadMode);
+  const [before, setBefore] = useState<ValidationResult | null>(null);
+  const [report, setReport] = useState<CalibrationReport | null>(null);
+  const [copied, setCopied] = useState(false);
+  const samples = useRef<ValidationSample[]>([]);
 
   const [framing, setFraming] = useState<FramingCheck>({ ok: false, hints: [] });
   const [framingStable, setFramingStable] = useState(false);
@@ -56,6 +74,10 @@ export function CalibrationOverlay({ controller, onDone, onCancel }: Props) {
   const calPoints = useMemo(() => buildPoints(window.innerWidth, window.innerHeight), []);
   const valPoints = useMemo(
     () => buildPoints(window.innerWidth, window.innerHeight, VALIDATION_GRID),
+    [],
+  );
+  const recheckPoints = useMemo(
+    () => buildPoints(window.innerWidth, window.innerHeight, RECHECK_GRID),
     [],
   );
 
@@ -72,6 +94,14 @@ export function CalibrationOverlay({ controller, onDone, onCancel }: Props) {
   useEffect(() => {
     controller.setPreview(phase === 'intro');
   }, [controller, phase]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(MODE_KEY, mode);
+    } catch {
+      /* ignore */
+    }
+  }, [mode]);
 
   // 안내 화면: 자세를 계속 검사해서 충분히 안정적으로 맞았을 때만 시작할 수 있게 한다
   useEffect(() => {
@@ -94,12 +124,13 @@ export function CalibrationOverlay({ controller, onDone, onCancel }: Props) {
 
   // 보정/검증 중: 시작 때 자세에서 벗어나면 경고하고, 검증 오차와 비교할 자세를 모은다
   useEffect(() => {
-    if (phase !== 'calibrate' && phase !== 'validate') return;
+    if (phase !== 'calibrate' && phase !== 'validate' && phase !== 'recheck') return;
     const id = window.setInterval(() => {
       const d = controller.getDrift();
       setDriftHints(d ? checkDrift(d).hints : []);
       const p = controller.getPose();
-      if (p) (phase === 'calibrate' ? calPoses : valPoses).current.push(p);
+      if (p && phase === 'calibrate') calPoses.current.push(p);
+      if (p && phase === 'validate') valPoses.current.push(p);
     }, 300);
     return () => {
       window.clearInterval(id);
@@ -120,55 +151,79 @@ export function CalibrationOverlay({ controller, onDone, onCancel }: Props) {
     if (next >= CLICKS_PER_POINT) {
       setClicks(0);
       if (idx + 1 >= calPoints.length) {
+        samples.current = [];
         setPhase('validate');
         setIdx(0);
       } else setIdx(idx + 1);
     } else setClicks(next);
   }, [calPoints, clicks, controller, idx]);
 
-  // 검증 단계: 점마다 자동 수집
+  // 검증 1 / 검증 2: 점마다 자동 수집
   useEffect(() => {
-    if (phase !== 'validate') return;
+    if (phase !== 'validate' && phase !== 'recheck') return;
+    const points = phase === 'validate' ? valPoints : recheckPoints;
     let cancelled = false;
     (async () => {
       setMeasuring(true);
-      const p = valPoints[idx];
-      const s = await controller.measureTarget(p.x, p.y);
+      const p = points[idx];
+      // 검증 2에서 모은 샘플은 학습에 쓰지 않는다 (두 방식이 같은 조건에서 비교되도록)
+      const s = await controller.measureTarget(p.x, p.y, { capture: phase === 'validate' });
       if (cancelled) return;
       setMeasuring(false);
-      setSamples((prev) => [...prev, ...s]);
-      if (idx + 1 >= valPoints.length) setPhase('result');
-      else setIdx(idx + 1);
+      samples.current.push(...s);
+      if (idx + 1 < points.length) {
+        setIdx(idx + 1);
+        return;
+      }
+
+      const result = summarizeValidation(samples.current);
+      samples.current = [];
+      setIdx(0);
+      if (phase === 'validate') {
+        // 보정 때와 검증 때 자세 차이. 오차와 같이 기록해 머리 움직임의 영향을 본다
+        const cal = averagePoses(calPoses.current);
+        const val = averagePoses(valPoses.current);
+        const first = { ...result, postureDrift: cal && val ? postureDrift(cal, val) : undefined };
+        setBefore(first);
+        if (mode === 'retrain') {
+          controller.commitValidationTraining();
+        } else {
+          controller.discardValidationTraining();
+          controller.applyBias(first.bias);
+        }
+        setPhase('recheck');
+      } else {
+        setReport({
+          mode,
+          before: before!,
+          after: result,
+          viewport: { w: window.innerWidth, h: window.innerHeight },
+          at: new Date(),
+        });
+        setPhase('result');
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [phase, idx, controller, valPoints]);
-
-  useEffect(() => {
-    if (phase !== 'result') return;
-    const base = summarizeValidation(samples);
-    const cal = averagePoses(calPoses.current);
-    const val = averagePoses(valPoses.current);
-    // 보정 때와 검증 때 자세 차이. 오차와 같이 기록해 머리 움직임의 영향을 본다
-    const drift = cal && val ? postureDrift(cal, val) : undefined;
-    setResult({ ...base, postureDrift: drift });
-  }, [phase, samples]);
+  }, [phase, idx, controller, valPoints, recheckPoints, mode, before]);
 
   const restart = () => {
-    // 이전 학습 데이터(저장분 포함)를 지우고 새로 시작
+    // 이전 학습 데이터와 쏠림 보정을 지우고 새로 시작
     void controller.resetTraining();
     controller.captureReference(); // 지금 자세를 기준으로 삼는다
     calPoses.current = [];
     valPoses.current = [];
+    samples.current = [];
     setPhase('calibrate');
     setIdx(0);
     setClicks(0);
-    setSamples([]);
-    setResult(null);
+    setBefore(null);
+    setReport(null);
+    setCopied(false);
   };
 
-  // 다시 보정: 안내 화면으로 돌아가 자세부터 다시 맞춘다
+  // 다시 보정: 안내 화면으로 돌아가 자세(와 마무리 방식)부터 다시 고른다
   const retry = () => {
     controller.clearReference();
     setFraming({ ok: false, hints: [] });
@@ -177,29 +232,52 @@ export function CalibrationOverlay({ controller, onDone, onCancel }: Props) {
     setPhase('intro');
     setIdx(0);
     setClicks(0);
-    setSamples([]);
-    setResult(null);
+    setBefore(null);
+    setReport(null);
+    setCopied(false);
   };
 
   const finish = () => {
-    if (!result) return;
-    // 검증 오차는 이미 쟀으니, 검증 점도 학습에 합쳐 남은 쏠림까지 줄인다
-    controller.commitValidationTraining();
-    onDone(result);
+    if (report) onDone(report);
   };
+
+  const reportText = report ? formatReport(report) : '';
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(reportText);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  const px = (v: number) => (Number.isFinite(v) ? `${Math.round(v)}px` : '-');
+  const measurePoints = phase === 'validate' ? valPoints : recheckPoints;
 
   return (
     <div className="gz-scrim" role="dialog" aria-modal="true" aria-label="시선 보정">
       {phase === 'intro' && (
         <div className="gz-card">
           <h2>시선 보정</h2>
-          <p>화면에 나타나는 점을 바라보며 각각 4번 클릭해 주세요. 약 50초 걸립니다.</p>
+          <p>화면에 나타나는 점을 바라보며 각각 4번 클릭해 주세요. 약 1분 걸립니다.</p>
           <ul className="gz-tips">
             <li>얼굴 전체가 카메라에 보이고, 앞쪽에서 조명이 비추는 곳이 좋습니다.</li>
             <li>역광(창문 등을 등지는 자리)은 피해 주세요.</li>
             <li>오른쪽 위 영상의 점선 상자 안에 얼굴 중앙이 오게 앉아 주세요.</li>
             <li>보정 중에는 머리를 크게 움직이지 말고, 점만 바라봐 주세요.</li>
           </ul>
+          <fieldset className="gz-mode">
+            <legend>마무리 방식 (비교용)</legend>
+            {(['retrain', 'bias'] as const).map((m) => (
+              <label key={m}>
+                <input type="radio" name="gz-mode" checked={mode === m} onChange={() => setMode(m)} />
+                {FINISH_MODE_LABEL_KO[m]}
+                <span className="gz-mode-desc">
+                  {m === 'retrain' ? ' — 검증 점까지 합쳐 다시 학습' : ' — 검증에서 잰 쏠림만큼 좌표를 옮김'}
+                </span>
+              </label>
+            ))}
+          </fieldset>
           <p className={`gz-frame ${framing.ok ? 'gz-frame--ok' : ''}`}>
             {framingStable
               ? '자세가 좋습니다. 이 자세를 유지한 채 시작하세요.'
@@ -221,7 +299,7 @@ export function CalibrationOverlay({ controller, onDone, onCancel }: Props) {
         </div>
       )}
 
-      {driftHints.length > 0 && (phase === 'calibrate' || phase === 'validate') && (
+      {driftHints.length > 0 && phase !== 'intro' && phase !== 'result' && (
         <div className="gz-warn" role="status">{driftHints.join(' · ')}</div>
       )}
 
@@ -246,40 +324,73 @@ export function CalibrationOverlay({ controller, onDone, onCancel }: Props) {
         </>
       )}
 
-      {phase === 'validate' && (
+      {(phase === 'validate' || phase === 'recheck') && (
         <>
           <div className="gz-hud">
-            정확도 측정 · 점을 가만히 바라보세요 ({idx + 1}/{valPoints.length})
+            {phase === 'validate' ? '정확도 측정' : `마무리(${FINISH_MODE_LABEL_KO[mode]}) 확인`} · 점을 가만히
+            바라보세요 ({idx + 1}/{measurePoints.length})
           </div>
           <div
-            key={idx}
+            key={`${phase}-${idx}`}
             className={`gz-target ${measuring ? '' : 'gz-target--idle'}`}
             style={
-              { left: valPoints[idx].x, top: valPoints[idx].y, '--p': '360deg' } as CSSProperties
+              { left: measurePoints[idx].x, top: measurePoints[idx].y, '--p': '360deg' } as CSSProperties
             }
           />
         </>
       )}
 
-      {phase === 'result' && result && (
+      {phase === 'result' && report && (
         <div className="gz-card">
-          <h2>보정 결과: {GRADE_LABEL_KO[result.grade]}</h2>
-          <dl className="gz-stat">
-            <dt>정확도(점별 중심)</dt>
-            <dd>{Math.round(result.accuracyPx)}px</dd>
-            <dt>평균 오차(떨림 포함)</dt>
-            <dd>{Math.round(result.meanErrorPx)}px</dd>
-            <dt>90% 오차 이내</dt>
-            <dd>{Math.round(result.p90ErrorPx)}px</dd>
-            <dt>쏠림(편향)</dt>
-            <dd>
-              x {Math.round(result.bias.dx)}px, y {Math.round(result.bias.dy)}px
-            </dd>
-          </dl>
-          <p className="gz-frame-debug">"이대로 시작"을 누르면 검증 점도 학습에 합쳐 쏠림을 더 줄입니다.</p>
-          {result.grade === 'poor' && (
+          <h2>보정 결과: {GRADE_LABEL_KO[report.after.grade]}</h2>
+          <table className="gz-compare">
+            <thead>
+              <tr>
+                <th />
+                <th>검증 1 (마무리 전)</th>
+                <th>검증 2 ({FINISH_MODE_LABEL_KO[report.mode]} 후)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th>정확도(점별 중심)</th>
+                <td>{px(report.before.accuracyPx)}</td>
+                <td>{px(report.after.accuracyPx)}</td>
+              </tr>
+              <tr>
+                <th>평균 오차(떨림 포함)</th>
+                <td>{px(report.before.meanErrorPx)}</td>
+                <td>{px(report.after.meanErrorPx)}</td>
+              </tr>
+              <tr>
+                <th>90% 오차 이내</th>
+                <td>{px(report.before.p90ErrorPx)}</td>
+                <td>{px(report.after.p90ErrorPx)}</td>
+              </tr>
+              <tr>
+                <th>쏠림 (x, y)</th>
+                <td>
+                  {Math.round(report.before.bias.dx)}, {Math.round(report.before.bias.dy)}
+                </td>
+                <td>
+                  {Math.round(report.after.bias.dx)}, {Math.round(report.after.bias.dy)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          {report.after.grade === 'poor' && (
             <p>오차가 큽니다. 조명을 밝게 하고 카메라와 눈높이를 맞춘 뒤 다시 보정해 보세요.</p>
           )}
+          <div className="gz-copy">
+            <textarea
+              readOnly
+              value={reportText}
+              rows={reportText.split('\n').length}
+              onFocus={(e) => e.currentTarget.select()}
+              aria-label="복사용 결과"
+            />
+            <button className="gz-btn" onClick={copy}>{copied ? '복사됨' : '결과 복사'}</button>
+          </div>
           <div className="gz-actions">
             <button className="gz-btn" onClick={retry}>다시 보정</button>
             <button className="gz-btn gz-btn--primary" onClick={finish}>이대로 시작</button>
