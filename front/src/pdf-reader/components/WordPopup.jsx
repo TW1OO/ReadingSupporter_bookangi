@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { lookupWord } from '../lib/dictionary.js';
+import { explainWord, lookupWord } from '../lib/dictionary.js';
 
 const TABS = [
   { id: 'meaning', label: '뜻', key: '1' },
@@ -12,6 +12,7 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
   const ref = useRef(null);
   const tab = choice ?? 'meaning';
   const [entry, setEntry] = useState(null);
+  const [ai, setAi] = useState(null); // 해설·예시 탭을 처음 열 때 불러옵니다
   const [pos, setPos] = useState({ left: 0, top: 0, width: 360 });
   const [copied, setCopied] = useState('idle'); // idle | done | fail
 
@@ -20,11 +21,22 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
     if (!selection) return;
     let cancelled = false;
     setEntry(null);
-    lookupWord(selection.word)
+    setAi(null);
+    lookupWord(selection.word, selection.context)
       .then((e) => !cancelled && setEntry(e))
       .catch(() => !cancelled && setEntry({ error: true }));
     return () => { cancelled = true; };
   }, [selection]);
+
+  // 문맥 해설·예문 (로컬 LLM). 느릴 수 있어 뜻과 따로, 필요할 때만 요청합니다.
+  const needAi = !!selection && !!entry && !entry.error && tab !== 'meaning';
+  const aiRequested = useRef(null);
+  useEffect(() => {
+    if (!needAi || aiRequested.current === selection) return;
+    aiRequested.current = selection;
+    explainWord({ surface: selection.word, lemma: entry.lemma, meaning: entry.meaning, context: selection.context })
+      .then((r) => { if (aiRequested.current === selection) setAi(r); });
+  }, [needAi, selection, entry]);
 
   // 선택 영역 근처에 배치 (아래 우선, 공간이 없으면 위)
   useLayoutEffect(() => {
@@ -38,7 +50,7 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
     if (top + height > window.innerHeight - margin) top = rect.top - height - 10;
     top = Math.max(margin, Math.min(top, window.innerHeight - height - margin));
     setPos({ left, top, width });
-  }, [selection, entry, tab]);
+  }, [selection, entry, tab, ai]);
 
   // 바깥 클릭 / Esc 로 닫기 (PDF 영역 클릭은 새 선택을 위해 유지)
   useEffect(() => {
@@ -86,13 +98,17 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
   } else if (tab === 'meaning') {
     body = <p>1. {entry.part ? `[${entry.part}] ` : ''}{entry.meaning}</p>;
   } else if (tab === 'explain') {
-    body = entry.explanation
-      ? <p className="example">“{entry.explanation}”</p>
-      : '등록된 해설이 없어요. 웹 검색에서 찾아보세요.';
+    body = !ai
+      ? <p className="popup-loading">해설을 준비하는 중…</p>
+      : ai.explanation
+        ? <p className="example">“{ai.explanation}”</p>
+        : 'AI 해설은 준비 중이에요. 웹 검색에서 찾아보세요.';
   } else {
-    body = entry.examples?.length
-      ? entry.examples.slice(0, 5).map((ex, i) => <p key={i} className="example">“{ex}”</p>)
-      : '등록된 예문이 없어요. 웹 검색에서 예문을 찾아보세요.';
+    body = !ai
+      ? <p className="popup-loading">예문을 준비하는 중…</p>
+      : ai.examples?.length
+        ? ai.examples.slice(0, 5).map((ex, i) => <p key={i} className="example">“{ex}”</p>)
+        : 'AI 예문은 준비 중이에요. 웹 검색에서 찾아보세요.';
   }
 
   return (

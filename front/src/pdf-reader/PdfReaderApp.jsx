@@ -55,9 +55,9 @@ export default function PdfReaderApp() {
 
   // 마우스 드래그로 고른 단어도 손과 같은 경로(WORD_POINTED)로 보냅니다.
   const selectionSeq = useRef(0);
-  const selectByMouse = useCallback(({ word, rect }) => {
+  const selectByMouse = useCallback(({ word, context, rect }) => {
     const id = `sel:${++selectionSeq.current}`;
-    setPicked({ id, word, rect });
+    setPicked({ id, word, context, rect });
     dispatch({ type: 'WORD_POINTED', wordId: id, source: 'mouse' });
   }, []);
 

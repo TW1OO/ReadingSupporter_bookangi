@@ -62,3 +62,19 @@ export async function lookupWord(word, context) {
     return { lemma: word, part: '', meaning: '사전 서버에 연결하지 못했어요. 백엔드가 켜져 있는지 확인해 주세요.', explanation: '', examples: [] };
   }
 }
+
+/** 문맥 해설·예문 (POST /api/explain). 실패해도 뜻 보기에 영향을 주지 않도록 '준비 안 됨'으로 돌려줍니다. */
+export async function explainWord({ surface, lemma, meaning, context }) {
+  try {
+    const res = await fetch(`${API_BASE}/explain`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ surface, lemma, meaning, context }),
+    });
+    if (!res.ok) throw new Error(`explain failed: ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    console.warn('해설 API 호출 실패', error);
+    return { status: 'unavailable', explanation: null, examples: [] };
+  }
+}

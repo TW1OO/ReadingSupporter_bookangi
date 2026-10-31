@@ -25,7 +25,8 @@
 1. 마우스 클릭 조회 → 2. 손 포인팅·번호 메뉴·주먹 취소 → 3. 시선 문단 추정·어려운 단어 강조 → 4. 원형 복원·난이도 지표
 
 ## 미정 (결정 필요)
-- 형태소 분석기 선택, 해설 방식(사전 API만 vs LLM 병행), 담당자 배정
+- 형태소 분석기 선택, 담당자 배정
+- 해설은 서버의 로컬 LLM으로 마지막에 연동 (`back/app/services/explain.py`, 지금은 빈 자리)
 
 ## 명령어
 - 프론트: `cd front && npm install && npm run dev | typecheck | test | build`

@@ -21,5 +21,6 @@ cd back && uvicorn app.main:app --reload   # 사전 조회(/api/lookup)
 - MediaPipe: 로컬 wasm(`public/mediapipe/wasm`)과 모델을 쓴다. 오프라인 부스에서도 동작.
 
 ## 남은 일 / 알려진 한계
+- 해설·예시: 서버의 로컬 LLM으로 마지막에 연동한다. `POST /api/explain`과 화면은 연결돼 있고, `back/app/services/explain.py`의 `generate_explanation`만 채우면 된다. 지금은 `status: "unavailable"`을 돌려준다.
 - 백엔드 라우터 응답 형태와 `schemas.py`(LookupResponse)가 다르다. 프론트 어댑터가 둘 다 받지만 계약은 한쪽으로 맞추는 게 좋다.
 - 스캔 PDF처럼 글자 정보가 없는 문서는 단어를 고를 수 없다.

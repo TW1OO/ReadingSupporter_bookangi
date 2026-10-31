@@ -152,7 +152,7 @@ const PdfViewer = forwardRef(function PdfViewer(
       range.setStart(node, start);
       range.setEnd(node, end);
       const r = range.getBoundingClientRect();
-      return { word: node.textContent.slice(start, end), rect: { left: r.left, top: r.top, bottom: r.bottom } };
+      return { word: node.textContent.slice(start, end), context: node.textContent, rect: { left: r.left, top: r.top, bottom: r.bottom } };
     },
   }), []);
 
@@ -171,7 +171,7 @@ const PdfViewer = forwardRef(function PdfViewer(
       if (!el || !textLayerRef.current?.contains(el)) return;
       const rect = sel.getRangeAt(0).getBoundingClientRect();
       if (!rect.width && !rect.height) return;
-      cb.current.onSelectText?.({ word, rect: { left: rect.left, top: rect.top, bottom: rect.bottom } });
+      cb.current.onSelectText?.({ word, context: el.textContent, rect: { left: rect.left, top: rect.top, bottom: rect.bottom } });
     }, 180);
   };
 
