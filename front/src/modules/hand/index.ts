@@ -36,7 +36,7 @@ export interface HandFrame {
 
 export interface HandOptions {
   video: HTMLVideoElement
-  // 현재 phase. 포인팅은 idle 일 때만, 메뉴 선택은 menu 일 때만, 취소는 idle 이 아닐 때만 방출한다.
+  // 현재 phase. 포인팅은 idle 일 때만, 메뉴 선택·취소는 idle 이 아닐 때만 방출한다.
   getPhase: () => 'idle' | 'menu' | 'result'
   // 포인터가 스냅할 단어 사각형들 (뷰포트 좌표)
   getWordRects: () => WordRect[]
@@ -52,7 +52,7 @@ const MODEL_PATH = `${BASE}/mediapipe/hand_landmarker.task`
 
 // 2단계: 웹캠 → MediaPipe(브라우저) → InputEvent. gaze 모듈을 import 하지 않는다.
 //  - 검지만 펴고 같은 단어 위에서 유지 → WORD_POINTED (idle 에서만)
-//  - 메뉴 상태에서 1/2/3 유지 → MENU_SELECTED
+//  - 메뉴·결과 상태에서 1/2/3 유지 → MENU_SELECTED (결과에서는 탭 전환)
 //  - 주먹 유지 → CANCEL (idle 이 아닐 때)
 // 반환값을 호출하면 카메라와 모델을 정리한다.
 export function startHandInput(emit: (ev: InputEvent) => void, opts: HandOptions): () => void {
@@ -178,7 +178,7 @@ export function startHandInput(emit: (ev: InputEvent) => void, opts: HandOptions
           const done = stab.update(count, now, g.blocked)
           if (done !== null) {
             if (gesture.kind === 'fist' && phase !== 'idle') emit({ type: 'CANCEL' })
-            else if (gesture.kind === 'menu' && phase === 'menu')
+            else if (gesture.kind === 'menu' && phase !== 'idle')
               emit({ type: 'MENU_SELECTED', choice: gesture.choice })
           }
         }

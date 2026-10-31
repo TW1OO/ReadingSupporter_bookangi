@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-export default function Landing({ dragging, notice, onChooseFile, onOpenUrl }) {
+export default function Landing({ dragging, notice, onChooseFile, onOpenUrl, onInfo }) {
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -79,9 +79,8 @@ export default function Landing({ dragging, notice, onChooseFile, onOpenUrl }) {
       <footer className="home-footer">
         <span>© 2026 Book항이. All rights reserved.</span>
         <nav>
-          <a href="#privacy" onClick={(e) => e.preventDefault()}>개인정보 처리방침</a>
-          <a href="#terms" onClick={(e) => e.preventDefault()}>이용약관</a>
-          <a href="#help" onClick={(e) => e.preventDefault()}>도움말 Center</a>
+          <a href="#help" onClick={(e) => { e.preventDefault(); onInfo('help'); }}>도움말</a>
+          <a href="#credits" onClick={(e) => { e.preventDefault(); onInfo('credits'); }}>출처</a>
         </nav>
       </footer>
     </div>

@@ -3,19 +3,14 @@ import { lookupWord } from '../lib/dictionary.js';
 
 const TABS = [
   { id: 'meaning', label: '뜻', key: '1' },
-  { id: 'explanation', label: '해설', key: '2' },
-  { id: 'examples', label: '예시', key: '3' },
+  { id: 'explain', label: '해설', key: '2' },
+  { id: 'search', label: '예시', key: '3' },
 ];
 
-export default function WordPopup({ selection, stageRef, onClose, gestureChoice = null }) {
+// 탭은 state(MenuChoice)가 결정합니다. 손가락·키보드·클릭 모두 onChoice 로 같은 이벤트를 보냅니다.
+export default function WordPopup({ selection, stageRef, onClose, choice, onChoice }) {
   const ref = useRef(null);
-  const [tab, setTab] = useState('meaning');
-
-  useEffect(() => {
-    if (gestureChoice === 1 || gestureChoice === 11) setTab('meaning');
-    if (gestureChoice === 2 || gestureChoice === 22) setTab('explanation');
-    if (gestureChoice === 3 || gestureChoice === 33) setTab('examples');
-  }, [gestureChoice]);
+  const tab = choice ?? 'meaning';
   const [entry, setEntry] = useState(null);
   const [pos, setPos] = useState({ left: 0, top: 0, width: 360 });
   const [copied, setCopied] = useState('idle'); // idle | done | fail
@@ -24,7 +19,6 @@ export default function WordPopup({ selection, stageRef, onClose, gestureChoice 
   useEffect(() => {
     if (!selection) return;
     let cancelled = false;
-    setTab('meaning');
     setEntry(null);
     lookupWord(selection.word)
       .then((e) => !cancelled && setEntry(e))
@@ -59,7 +53,7 @@ export default function WordPopup({ selection, stageRef, onClose, gestureChoice 
       if (e.ctrlKey || e.metaKey || e.altKey || e.target.matches?.('input, textarea')) return;
       if (e.key === '0') return onClose();
       const t = TABS.find((x) => x.key === e.key);
-      if (t) setTab(t.id);
+      if (t) onChoice(t.id);
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
@@ -67,7 +61,7 @@ export default function WordPopup({ selection, stageRef, onClose, gestureChoice 
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
     };
-  }, [selection, stageRef, onClose]);
+  }, [selection, stageRef, onClose, onChoice]);
 
   if (!selection) return null;
   const { word } = selection;
@@ -91,7 +85,7 @@ export default function WordPopup({ selection, stageRef, onClose, gestureChoice 
     body = '사전 뜻을 가져오지 못했어요. 웹 검색으로 더 확인할 수 있습니다.';
   } else if (tab === 'meaning') {
     body = <p>1. {entry.part ? `[${entry.part}] ` : ''}{entry.meaning}</p>;
-  } else if (tab === 'explanation') {
+  } else if (tab === 'explain') {
     body = entry.explanation
       ? <p className="example">“{entry.explanation}”</p>
       : '등록된 해설이 없어요. 웹 검색에서 찾아보세요.';
@@ -120,7 +114,7 @@ export default function WordPopup({ selection, stageRef, onClose, gestureChoice 
 
       <div className="popup-tabs">
         {TABS.map((t) => (
-          <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)} title={`${t.label} (${t.key}번 키)`}>
+          <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => onChoice(t.id)} title={`${t.label} (${t.key}번 키)`}>
             {t.key} {t.label}
           </button>
         ))}

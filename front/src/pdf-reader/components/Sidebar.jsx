@@ -1,6 +1,6 @@
 import Thumbnail from './Thumbnail.jsx';
 
-export default function Sidebar({ pdfDoc, page, onPageSelect, gaze, collapsed, onToggleCollapse }) {
+export default function Sidebar({ pdfDoc, page, onPageSelect, hand, gaze, collapsed, onToggleCollapse }) {
   const total = pdfDoc?.numPages ?? 0;
   return (
     <aside className={`sidebar${collapsed ? ' collapsed' : ''}`}>
@@ -17,25 +17,31 @@ export default function Sidebar({ pdfDoc, page, onPageSelect, gaze, collapsed, o
       {/* 접어도 언마운트하지 않아야 카메라 <video> 참조가 유지됩니다 */}
       <div className="sidebar-body" aria-hidden={collapsed}>
         <div className="gaze-card">
-          <div className={`gaze-preview${(gaze.cameraOn || gaze.enabled) ? ' camera-on' : ''}`}>
-            공유 카메라 미리보기 · 손/눈 동시 인식
-            <video ref={gaze.videoRef} autoPlay muted playsInline />
+          <div className={`gaze-preview${hand.enabled ? ' camera-on' : ''}`}>
+            손 인식 카메라 미리보기
+            <video ref={hand.videoRef} autoPlay muted playsInline />
           </div>
           <div className="gaze-controls">
-            <button className="primary" onClick={gaze.onToggle}>
-              {gaze.enabled ? '카메라 및 인식 중지' : '카메라 및 손·눈 인식 시작'}
+            <button className="primary" onClick={hand.onToggle}>
+              {hand.enabled ? '손 인식 중지' : '손 인식 시작'}
             </button>
-            <span className="gaze-status">{gaze.label}</span>
+            <button onClick={gaze.on ? gaze.onStop : gaze.onCalibrate} disabled={gaze.status === 'loading'}>
+              {gaze.on ? '시선 중지' : '시선 보정'}
+            </button>
           </div>
         </div>
 
         <div className="side-state">
-          <i className={`dot${gaze.enabled ? '' : ' gray'}`} />
-          <span>{gaze.enabled ? '손 인식 + 눈 인식 활성화' : '손·눈 인식 대기 중'}</span>
+          <i className={`dot${hand.enabled ? '' : ' gray'}`} />
+          <span>{hand.label}</span>
+        </div>
+        <div className="side-state">
+          <i className={`dot${gaze.on ? '' : ' gray'}`} />
+          <span>{gaze.label}</span>
         </div>
         <div className="side-state">
           <i className="dot gray" />
-          <span>선택 동작: 텍스트 드래그</span>
+          <span>마우스: 텍스트 드래그</span>
         </div>
 
         <div className="side-heading">

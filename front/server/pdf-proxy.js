@@ -1,6 +1,7 @@
 import http from 'node:http';
 import dns from 'node:dns/promises';
 import net from 'node:net';
+import { contentDisposition } from './filename.js';
 
 const PORT = Number(process.env.PDF_PROXY_PORT || 8001);
 const MAX_BYTES = 50 * 1024 * 1024;
@@ -59,7 +60,7 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') { res.writeHead(204).end(); return; }
-  const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const requestUrl = new URL(req.url, 'http://localhost');
   if (req.method !== 'GET' || requestUrl.pathname !== '/api/pdf-proxy') {
     res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'Not found' })); return;
   }
@@ -87,8 +88,7 @@ const server = http.createServer(async (req, res) => {
     if (body.length < 5 || body.subarray(0, 5).toString() !== '%PDF-') {
       res.writeHead(415, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: '링크가 PDF 파일을 반환하지 않았습니다. 공개된 PDF 직접 링크인지 확인해 주세요.' })); return;
     }
-    const name = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || 'document.pdf').replace(/[\r\n"\\]/g, '_');
-    res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': body.length, 'Content-Disposition': `inline; filename="${name.endsWith('.pdf') ? name : `${name}.pdf`}"`, 'Cache-Control': 'no-store' });
+    res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': body.length, 'Content-Disposition': contentDisposition(url.pathname), 'Cache-Control': 'no-store' });
     res.end(body);
   } catch (err) {
     const message = err?.name === 'TimeoutError' ? 'PDF 서버 응답 시간이 초과되었습니다.' : (err?.message || 'PDF를 가져오지 못했습니다.');

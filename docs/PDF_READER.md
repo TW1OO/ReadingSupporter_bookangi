@@ -11,18 +11,15 @@ npm run dev           # Vite 만. 파일 업로드/드래그로만 열 때
 cd back && uvicorn app.main:app --reload   # 사전 조회(/api/lookup)
 ```
 
-## 포크 구조에 맞추며 바꾼 점
-- 위치: 저장소 루트가 아니라 `front/` 안. 기존 `modules/hand`, `modules/gaze`, `state` 는 건드리지 않았다.
-- 전역 CSS(`styles.css`)는 `?pdf` 일 때만 lazy 로드. 정적 import 하면 body/button/header 스타일이 다른 화면까지 바뀐다.
-- MediaPipe: CDN wasm(0.10.14) → 로컬 `public/mediapipe/wasm`(포크의 1.1.1과 항상 같은 버전), 얼굴 모델도 로컬 `face_landmarker.task`. 오프라인 부스에서도 동작.
-- Vite 프록시: `/api/pdf-proxy` 를 `/api` 보다 먼저 둔다(순서가 바뀌면 FastAPI 404).
-- `tsconfig`: `allowJs` 추가(JS/JSX 파일을 strict TS 프로젝트에서 import 하기 위해).
-- `lib/dictionary.js`: 실제 라우터 응답(우리말샘/DeepL/not_found/error)을 모두 처리. 서버 오류를 "백엔드 미연결 데모 데이터"로 덮지 않는다.
-- 손 포인터: 프레임마다 전체 리렌더하던 것을 DOM 직접 갱신으로 변경. 가장자리 여백 보정 + 평활화 + "포인터가 움직이면 유지 시간 재시작".
-- PDF 프록시: IPv6 `[::1]`/IPv4-mapped 주소 차단 보강, CORS `*` 제거.
+## 구조
+- 위치: `front/src/pdf-reader`. 스타일(`styles.css`)은 전역이라 PDF 리더 화면에서만 lazy 로드한다.
+- 입력: 손은 `modules/hand`, 시선은 `modules/gaze`, 마우스 드래그까지 모두 `InputEvent`로 `modules/state`에 보낸다. 단어 팝업의 탭도 `state.choice`를 따른다.
+- 단어 스냅: PDF 텍스트 레이어는 조각 단위라 `lib/textLayout.js`로 단어를 나누고 `PdfViewer`가 단어 사각형을 손 모듈에 준다.
+- 시선: "시선 보정"을 마친 뒤에만 켜지며 줄 수준으로 강조한다. 지표 전송은 `/?gaze` 데모에서만 한다.
+- 보안: `pdfjs-dist` 4.x(GHSA-wgrm-67xf-hhpq 패치) + `isEvalSupported: false`.
+- PDF 프록시: 사설망 주소 차단, 50MB 제한, 한글 파일명은 RFC 5987로 전달.
+- MediaPipe: 로컬 wasm(`public/mediapipe/wasm`)과 모델을 쓴다. 오프라인 부스에서도 동작.
 
 ## 남은 일 / 알려진 한계
-- 이 화면의 손·시선은 자체 훅(`hooks/useHandGestures.js`, `useGazeTracker.js`)이다. 팀 설계(손/시선은 `InputEvent`만 `state` 로 전달)와 달라 중복이 있다.
-  `modules/hand`(자세 안내·worldLandmarks 기반 판정)와 `modules/gaze`(보정·One Euro)가 더 정확하므로, 이후 `startHandInput` / `GazeController` 로 교체 권장.
-  단, PDF 텍스트 레이어는 단어가 아니라 텍스트 조각 단위라 `data-word-id` 단어 분할이 먼저 필요하다.
 - 백엔드 라우터 응답 형태와 `schemas.py`(LookupResponse)가 다르다. 프론트 어댑터가 둘 다 받지만 계약은 한쪽으로 맞추는 게 좋다.
+- 스캔 PDF처럼 글자 정보가 없는 문서는 단어를 고를 수 없다.

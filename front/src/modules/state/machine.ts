@@ -19,8 +19,9 @@ export function reduce(state: State, ev: InputEvent): State {
   switch (ev.type) {
     case 'WORD_POINTED':
       return { ...state, phase: 'menu', wordId: ev.wordId, choice: null }
+    // 결과 화면에서도 1/2/3으로 탭을 바꿀 수 있다.
     case 'MENU_SELECTED':
-      return state.phase === 'menu' ? { ...state, phase: 'result', choice: ev.choice } : state
+      return state.phase === 'idle' ? state : { ...state, phase: 'result', choice: ev.choice }
     case 'CANCEL':
       return { ...state, phase: 'idle', wordId: null, choice: null }
     case 'GAZE_PARAGRAPH':

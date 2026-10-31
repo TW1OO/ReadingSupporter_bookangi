@@ -1,5 +1,8 @@
 import './styles.css';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { initialState, reduce } from '@/modules/state/machine';
+import { startHandInput } from '@/modules/hand';
+import { CalibrationOverlay, toInputEvent, useGaze } from '@/modules/gaze';
 import Header from './components/Header.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Toolbar from './components/Toolbar.jsx';
@@ -12,8 +15,6 @@ import Landing from './components/Landing.jsx';
 import InfoModal from './components/InfoModal.jsx';
 import { SCALE, clamp, isPdfFile, openPdf, fetchRemoteFile } from './lib/pdf.js';
 import { usePdfSearch } from './hooks/usePdfSearch.js';
-import { useGazeTracker } from './hooks/useGazeTracker.js';
-import { useHandGestures } from './hooks/useHandGestures.js';
 import { useFileDrop } from './hooks/useFileDrop.js';
 
 export default function PdfReaderApp() {
@@ -27,109 +28,103 @@ export default function PdfReaderApp() {
   const [dark, setDark] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [status, setStatus] = useState('준비됨 · 프론트엔드 데모');
-  const [selection, setSelection] = useState(null); // { word, rect }
+  const [input, dispatch] = useReducer(reduce, initialState); // 손·시선·마우스는 모두 InputEvent 로만 여기에 들어옵니다
+  const [picked, setPicked] = useState(null); // { id, word, rect } : wordId 가 가리키는 단어의 내용
   const [notice, setNotice] = useState('');
   const [info, setInfo] = useState(null); // 'help' | 'features' | 'credits' | null
   const [handEnabled, setHandEnabled] = useState(false);
   const [handStatus, setHandStatus] = useState('손 인식 대기 중');
-  const [handGestureChoice, setHandGestureChoice] = useState(null);
   const handPointerRef = useRef(null); // 포인터는 프레임마다 바뀌므로 state 대신 DOM 직접 갱신(전체 리렌더·텍스트 레이어 재그리기 방지)
-
-  // ---------- 시선 추적 상태 ----------
-  const [gazeEnabled, setGazeEnabled] = useState(false);
-  const [gazeLabel, setGazeLabel] = useState('데모 모드');
 
   const fileInputRef = useRef(null);
   const stageRef = useRef(null);
   const viewerRef = useRef(null);
   const videoRef = useRef(null);
-  const handVideoRef = videoRef; // 시선 추적과 손동작이 같은 카메라/비디오를 공유
   const pageTextsRef = useRef([]);
 
   const totalPages = pdfDoc?.numPages ?? 0;
 
   // ---------- 검색 ----------
   const search = usePdfSearch({ pdfDoc, pageTextsRef, onStatus: setStatus });
-  // 설명창 닫기 콜백은 손동작 처리기에서 사용하므로 먼저 선언합니다.
-  const closePopup = useCallback(() => setSelection(null), []);
+  const selection = picked && picked.id === input.wordId ? picked : null;
+  const closePopup = useCallback(() => dispatch({ type: 'CANCEL' }), []);
+  const chooseTab = useCallback((choice) => dispatch({ type: 'MENU_SELECTED', choice }), []);
   useEffect(() => {
     if (search.current) setPage(search.current.page);
   }, [search.current]);
 
-  // ---------- 시선 ----------
-  const handleGazeStatus = useCallback((label, message) => {
-    setGazeLabel(label);
-    setStatus(message);
+  // 마우스 드래그로 고른 단어도 손과 같은 경로(WORD_POINTED)로 보냅니다.
+  const selectionSeq = useRef(0);
+  const selectByMouse = useCallback(({ word, rect }) => {
+    const id = `sel:${++selectionSeq.current}`;
+    setPicked({ id, word, rect });
+    dispatch({ type: 'WORD_POINTED', wordId: id, source: 'mouse' });
   }, []);
-  const { cameraOn } = useGazeTracker({
-    enabled: gazeEnabled,
-    videoRef,
-    onPoint: (p) => viewerRef.current?.updateGaze(p),
-    onStatus: handleGazeStatus,
-    // 시선 모델 오류가 나도 손 인식까지 강제로 끄지 않습니다.
-    onError: () => { setGazeEnabled(false); },
-  });
 
-  const selectWordAtPoint = useCallback((point) => {
-    if (!point || !pdfDoc) return;
-    const layer = document.getElementById('textLayer');
-    if (!layer) return;
-    const spans = Array.from(layer.querySelectorAll('span'));
-    let nearest = null;
-    let best = Infinity;
-    for (const el of spans) {
-      const rect = el.getBoundingClientRect();
-      if (!rect.width || !rect.height) continue;
-      const dx = Math.max(rect.left - point.x, 0, point.x - rect.right);
-      const dy = Math.max(rect.top - point.y, 0, point.y - rect.bottom);
-      const distance = Math.hypot(dx, dy);
-      if (distance < best) { best = distance; nearest = { el, rect }; }
+  // ---------- 시선 (modules/gaze) ----------
+  // 읽는 중 클릭은 도구 막대 클릭도 많아 학습에 쓰지 않습니다.
+  const gaze = useGaze({ implicitClickTraining: false });
+  const [calibrating, setCalibrating] = useState(false);
+  const gazeOn = gaze.status === 'ready' || gaze.status === 'paused';
+  useEffect(() => gaze.controller.on((e) => {
+    const ev = toInputEvent(e);
+    if (ev) dispatch(ev);
+  }), [gaze.controller]);
+  useEffect(() => {
+    if (!gazeOn) dispatch({ type: 'GAZE_PARAGRAPH', paragraphId: null });
+  }, [gazeOn]);
+  const startCalibration = async () => {
+    try {
+      await gaze.start();
+      setCalibrating(true);
+    } catch {
+      setStatus('시선 인식을 시작하지 못했습니다. 손 인식과 마우스는 그대로 쓸 수 있습니다.');
     }
-    if (!nearest || best > 75) return;
-    const raw = nearest.el.textContent || '';
-    const words = raw.match(/[\p{L}\p{N}_'-]+/gu) || [];
-    if (!words.length) return;
-    const rect = nearest.rect;
-    const ratio = Math.max(0, Math.min(0.999, (point.x - rect.left) / Math.max(1, rect.width)));
-    const index = Math.min(words.length - 1, Math.floor(ratio * words.length));
-    const word = words[index].replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
-    if (!word) return;
-    setSelection({ word, rect: { left: point.x, top: point.y, bottom: point.y + 4 } });
-    setHandStatus(`선택한 단어: ${word}`);
-  }, [pdfDoc]);
+  };
+  const stopGaze = () => {
+    setCalibrating(false);
+    gaze.stop();
+  };
 
-  const handleHandGesture = useCallback((count, point) => {
-    // 주먹(손가락 0개)을 유지하면 검색창을 확실히 닫고 입력값도 비웁니다.
-    if (count === 0) {
-      // 주먹은 손가락 0개로 처리하고, 키보드 0과 동일하게 단어 설명창도 닫습니다.
-      closePopup();
-      search.setOpen(false);
-      search.setQuery('');
-      setHandStatus('주먹 인식: 0개 · 설명창/검색창 닫기');
-      return;
-    }
-    if (count === 1) {
-      if (!selection) { selectWordAtPoint(point); setHandStatus('1개: 단어 선택 / 뜻 보기'); }
-      else { setHandGestureChoice((v) => v === 1 ? 11 : 1); setHandStatus('1개: 단어 뜻 보기'); }
-    } else if (count === 2) {
-      if (selection) { setHandGestureChoice((v) => v === 2 ? 22 : 2); setHandStatus('2개: 단어 해설 보기'); }
-      else setHandStatus('단어를 먼저 선택해 주세요.');
-    } else if (count === 3) {
-      if (selection) { setHandGestureChoice((v) => v === 3 ? 33 : 3); setHandStatus('3개: 예문 보기'); }
-      else setHandStatus('단어를 먼저 선택해 주세요.');
-    }
-  }, [selection, selectWordAtPoint, closePopup, search.setOpen, search.setQuery]);
-
-  const hand = useHandGestures({
-    enabled: handEnabled, videoRef: handVideoRef, onGesture: handleHandGesture,
-    onPoint: (p) => {
-      const el = handPointerRef.current;
-      if (!el) return;
-      if (p) { el.style.display = 'block'; el.style.left = `${p.x}px`; el.style.top = `${p.y}px`; }
-      else el.style.display = 'none';
-    },
-    onStatus: (message) => { setHandStatus(message); setStatus(message); },
-  });
+  // ---------- 손 (modules/hand) ----------
+  const phaseRef = useRef(input.phase);
+  phaseRef.current = input.phase;
+  useEffect(() => {
+    if (!handEnabled || !videoRef.current) return undefined;
+    const pointer = handPointerRef.current;
+    const stop = startHandInput(
+      (ev) => {
+        if (ev.type === 'WORD_POINTED') {
+          const info = viewerRef.current?.wordInfo(ev.wordId);
+          if (!info) return;
+          setPicked({ id: ev.wordId, ...info });
+        }
+        dispatch(ev);
+      },
+      {
+        video: videoRef.current,
+        getPhase: () => phaseRef.current,
+        getWordRects: () => viewerRef.current?.getWordRects() ?? [],
+        onPointer: (p) => {
+          // 포인터는 프레임마다 바뀌므로 DOM 을 직접 갱신합니다.
+          if (!pointer) return;
+          pointer.style.display = p ? 'block' : 'none';
+          if (p) {
+            pointer.style.left = `${p.x}px`;
+            pointer.style.top = `${p.y}px`;
+            pointer.style.boxShadow = `0 0 0 ${6 + Math.round(p.progress * 10)}px #f9731622`;
+          }
+        },
+        onGuide: (g) => setHandStatus(g.msg || '손 인식 중 · 검지로 단어를 가리키세요'),
+        onError: (e) => {
+          setHandStatus(`손 인식 시작 실패: ${e.message}`);
+          setHandEnabled(false);
+        },
+      },
+    );
+    setHandStatus('손 인식 중 · 검지로 단어를 가리키세요');
+    return stop;
+  }, [handEnabled]);
 
   // ---------- 파일 ----------
   const loadFile = useCallback(async (file) => {
@@ -168,10 +163,10 @@ export default function PdfReaderApp() {
   }, [loadFile]);
 
   const goHome = useCallback(() => {
-    setGazeEnabled(false);
+    stopGaze();
     setHandEnabled(false);
     search.close();
-    setSelection(null);
+    dispatch({ type: 'CANCEL' });
     setPdfDoc(null);
     setFileName('');
     setFileUrl(null);
@@ -193,7 +188,7 @@ export default function PdfReaderApp() {
   }, [dark]);
 
   // 페이지/배율/회전이 바뀌면 단어 팝업 닫기
-  useEffect(() => setSelection(null), [page, scale, rotation, pdfDoc]);
+  useEffect(() => dispatch({ type: 'CANCEL' }), [page, scale, rotation, pdfDoc]);
 
   // ---------- 동작 ----------
   const goToPage = useCallback(
@@ -237,15 +232,6 @@ export default function PdfReaderApp() {
     setStatus(win ? '열린 PDF 창에서 인쇄를 실행하세요.' : '팝업이 차단되었습니다. 다운로드 후 PDF를 인쇄해 주세요.');
   };
 
-  // 카메라를 켜면 손 인식과 눈(시선) 인식을 항상 동시에 실행합니다.
-  // 두 UI 버튼 모두 같은 추적 상태를 제어합니다.
-  const trackingEnabled = handEnabled || gazeEnabled;
-  const toggleTracking = () => {
-    const next = !trackingEnabled;
-    setGazeEnabled(next);
-    setHandEnabled(next);
-  };
-
   // ---------- 단축키 ----------
   useEffect(() => {
     const onKey = (e) => {
@@ -283,7 +269,19 @@ export default function PdfReaderApp() {
                 onPageSelect={setPage}
                 collapsed={!sidebarOpen}
                 onToggleCollapse={() => setSidebarOpen((v) => !v)}
-                gaze={{ enabled: trackingEnabled, label: gazeLabel, cameraOn, videoRef, onToggle: toggleTracking }}
+                hand={{
+                  enabled: handEnabled,
+                  label: handEnabled ? handStatus : '손 인식 꺼짐',
+                  videoRef,
+                  onToggle: () => setHandEnabled((v) => !v),
+                }}
+                gaze={{
+                  on: gazeOn,
+                  status: gaze.status,
+                  label: gaze.error ? `시선 오류: ${gaze.error}` : gazeOn ? '시선 보조 켜짐 · 줄 강조' : '시선 보조 꺼짐',
+                  onCalibrate: startCalibration,
+                  onStop: stopGaze,
+                }}
               />
 
               <main className="viewer">
@@ -312,21 +310,22 @@ export default function PdfReaderApp() {
                   scale={scale}
                   rotation={rotation}
                   highlightTerm={search.term}
+                  gazeRegionId={input.gazeParagraphId}
                   onOpen={chooseFile}
                   onPageText={(n, text) => { pageTextsRef.current[n - 1] = text; }}
                   onRendered={(n) => setStatus(`페이지 ${n} / ${totalPages} · 텍스트를 드래그해 단어를 선택하세요`)}
-                  onSelectText={setSelection}
+                  onSelectText={selectByMouse}
                 />
               </main>
             </div>
             <StatusBar status={status} />
           </>
         ) : (
-          <Landing dragging={dragging} notice={notice} onChooseFile={chooseFile} onOpenUrl={openUrl} />
+          <Landing dragging={dragging} notice={notice} onChooseFile={chooseFile} onOpenUrl={openUrl} onInfo={setInfo} />
         )}
       </div>
 
-      <WordPopup selection={selection} stageRef={stageRef} onClose={closePopup} gestureChoice={handGestureChoice} />
+      <WordPopup selection={selection} stageRef={stageRef} onClose={closePopup} choice={input.choice} onChoice={chooseTab} />
       <div ref={handPointerRef} className="hand-pointer" style={{ display: 'none' }} aria-hidden="true" />
       <input
         ref={fileInputRef} type="file" accept="application/pdf,.pdf" className="hidden"
@@ -336,6 +335,13 @@ export default function PdfReaderApp() {
           e.target.value = '';
         }}
       />
+      {calibrating && (
+        <CalibrationOverlay
+          controller={gaze.controller}
+          onCancel={stopGaze}
+          onDone={() => setCalibrating(false)}
+        />
+      )}
       <InfoModal section={info} onClose={() => setInfo(null)} />
       <DropOverlay visible={dragging} />
     </>

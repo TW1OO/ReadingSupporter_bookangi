@@ -1,5 +1,5 @@
 import * as pdfjsLib from 'pdfjs-dist';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.js?url';
+import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -14,7 +14,7 @@ export const isPdfFile = (file) =>
 
 export async function openPdf(file) {
   const data = await file.arrayBuffer();
-  return pdfjsLib.getDocument({ data: new Uint8Array(data) }).promise;
+  return pdfjsLib.getDocument({ data: new Uint8Array(data), isEvalSupported: false }).promise;
 }
 
 /**

@@ -1,24 +1,24 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { pdfjsLib } from '../lib/pdf.js';
 import { cleanSelection } from '../lib/text.js';
+import { layoutTextItem, splitWords } from '../lib/textLayout.js';
 
 /**
- * 캔버스 + 텍스트 레이어 + 시선 오버레이.
- * ref로 updateGaze({x, y, confidence}) / updateGaze(null)을 노출합니다.
- * (시선 좌표는 프레임마다 들어오므로 React state 대신 DOM을 직접 갱신해 리렌더를 피합니다.)
+ * 캔버스 + 텍스트 레이어.
+ * ref로 getWordRects() / wordInfo(id)를 노출합니다 (손 포인팅 스냅용).
+ * 각 텍스트 조각은 data-gaze-paragraph 를 달아 시선 모듈이 줄 수준으로 추정할 수 있게 합니다.
  */
 const PdfViewer = forwardRef(function PdfViewer(
-  { pdfDoc, pageNumber, scale, rotation, highlightTerm, stageRef, onOpen, onRendered, onPageText, onSelectText },
+  { pdfDoc, pageNumber, scale, rotation, highlightTerm, gazeRegionId, stageRef, onOpen, onRendered, onPageText, onSelectText },
   ref
 ) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
   const textLayerRef = useRef(null);
-  const washRef = useRef(null);
-  const pointerRef = useRef(null);
   const renderTaskRef = useRef(null);
   const markedRef = useRef([]);
   const selTimerRef = useRef(0);
+  const wordsRef = useRef(null); // 페이지 기준 단어 위치 캐시 (손 포인터가 프레임마다 읽는다)
 
   const [items, setItems] = useState([]);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -68,14 +68,7 @@ const PdfViewer = forwardRef(function PdfViewer(
         content.items.forEach((item, i) => {
           if (!item.str) return;
           const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
-          next.push({
-            key: i,
-            str: item.str,
-            left: tx[4],
-            top: tx[5] - Math.abs(tx[3]),
-            fontSize: Math.max(1, Math.hypot(tx[2], tx[3])),
-            fontFamily: item.fontName || 'sans-serif',
-          });
+          next.push({ key: i, str: item.str, ...layoutTextItem(item, tx, content.styles[item.fontName], viewport.scale) });
         });
         setItems(next);
         cb.current.onPageText?.(pageNumber, content.items.map((it) => it.str).join(' '));
@@ -91,62 +84,75 @@ const PdfViewer = forwardRef(function PdfViewer(
     };
   }, [pdfDoc, pageNumber, scale, rotation]);
 
-  // ---------- 시선 오버레이 ----------
-  const clearMarks = () => {
-    markedRef.current.forEach((el) => el.classList.remove('gaze-candidate', 'gaze-best'));
-    markedRef.current = [];
+  // ---------- 텍스트 레이어 정렬 ----------
+  // 대체 글꼴은 PDF 글꼴과 폭이 달라서, 조각마다 실제 글자 폭에 맞게 늘이거나 줄입니다.
+  useLayoutEffect(() => {
+    wordsRef.current = null;
+    const spans = Array.from(textLayerRef.current?.children ?? []);
+    spans.forEach((el) => { el.style.transform = ''; });
+    const natural = spans.map((el) => el.offsetWidth);
+    spans.forEach((el, i) => {
+      const it = items[i];
+      if (!it) return;
+      const rotate = it.angle ? `rotate(${it.angle}rad) ` : '';
+      const fit = natural[i] > 0 && it.width > 0 ? `scaleX(${it.width / natural[i]})` : '';
+      el.style.transform = rotate + fit;
+    });
+  }, [items]);
+
+  // ---------- 시선 강조: 시선이 머무는 줄 ----------
+  useEffect(() => {
+    const layer = textLayerRef.current;
+    if (!layer || !gazeRegionId) return undefined;
+    const hit = Array.from(layer.children).find((el) => el.dataset.gazeParagraph === gazeRegionId);
+    if (!hit) return undefined;
+    const r = hit.getBoundingClientRect();
+    const cy = (r.top + r.bottom) / 2;
+    const line = Array.from(layer.children).filter((el) => {
+      const o = el.getBoundingClientRect();
+      return cy >= o.top && cy <= o.bottom;
+    });
+    line.forEach((el) => el.classList.add('gaze-best'));
+    return () => line.forEach((el) => el.classList.remove('gaze-best'));
+  }, [gazeRegionId, items]);
+
+  // ---------- 손 포인팅용 단어 위치 ----------
+  const measureWords = () => {
+    const out = [];
+    const wrap = wrapRef.current.getBoundingClientRect();
+    const range = document.createRange();
+    Array.from(textLayerRef.current.children).forEach((el, spanIndex) => {
+      const node = el.firstChild;
+      if (!node) return;
+      for (const { start, end } of splitWords(node.textContent)) {
+        range.setStart(node, start);
+        range.setEnd(node, end);
+        const r = range.getBoundingClientRect();
+        if (r.width && r.height) {
+          out.push({ id: `${spanIndex}:${start}:${end}`, left: r.left - wrap.left, top: r.top - wrap.top, right: r.right - wrap.left, bottom: r.bottom - wrap.top });
+        }
+      }
+    });
+    return out;
   };
 
   useImperativeHandle(ref, () => ({
-    updateGaze(point) {
-      const wrap = wrapRef.current;
-      const pointer = pointerRef.current;
-      const wash = washRef.current;
-      if (!wrap || !pointer || !wash) return;
-
-      if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y) || !wrap.offsetWidth) {
-        pointer.style.display = wash.style.display = 'none';
-        clearMarks();
-        return;
-      }
-
-      const { x, y, confidence = 1 } = point;
-      const px = Math.max(0, Math.min(wrap.clientWidth, x * wrap.clientWidth));
-      const py = Math.max(0, Math.min(wrap.clientHeight, y * wrap.clientHeight));
-
-      pointer.style.display = wash.style.display = 'block';
-      pointer.style.left = `${px}px`;
-      pointer.style.top = `${py}px`;
-      wash.style.left = `${Math.max(0, px - 46)}px`;
-      wash.style.top = `${Math.max(0, py - 12)}px`;
-      wash.style.width = '92px';
-      wash.style.height = '24px';
-
-      const w = wrap.getBoundingClientRect();
-      const centers = [];
-      let nearest = null;
-      let best = Infinity;
-      for (const el of textLayerRef.current.children) {
-        const r = el.getBoundingClientRect();
-        const cx = r.left - w.left + r.width / 2;
-        const cy = r.top - w.top + r.height / 2;
-        centers.push([el, cx, cy]);
-        const d = Math.hypot(cx - px, cy - py);
-        if (d < best) { best = d; nearest = [el, cx, cy]; }
-      }
-
-      clearMarks();
-      if (nearest && best < 110 && confidence >= 0.25) {
-        const [bestEl, nx, ny] = nearest;
-        bestEl.classList.add('gaze-best');
-        markedRef.current.push(bestEl);
-        for (const [el, cx, cy] of centers) {
-          if (el !== bestEl && Math.hypot(cx - nx, cy - ny) < 95) {
-            el.classList.add('gaze-candidate');
-            markedRef.current.push(el);
-          }
-        }
-      }
+    // 뷰포트 좌표의 단어 사각형들 (스크롤 위치만 더하면 되므로 측정은 한 번만 합니다)
+    getWordRects() {
+      if (!wrapRef.current || !textLayerRef.current) return [];
+      wordsRef.current ??= measureWords();
+      const { left, top } = wrapRef.current.getBoundingClientRect();
+      return wordsRef.current.map((w) => ({ id: w.id, left: w.left + left, top: w.top + top, right: w.right + left, bottom: w.bottom + top }));
+    },
+    wordInfo(id) {
+      const [spanIndex, start, end] = id.split(':').map(Number);
+      const node = textLayerRef.current?.children[spanIndex]?.firstChild;
+      if (!node) return null;
+      const range = document.createRange();
+      range.setStart(node, start);
+      range.setEnd(node, end);
+      const r = range.getBoundingClientRect();
+      return { word: node.textContent.slice(start, end), rect: { left: r.left, top: r.top, bottom: r.bottom } };
     },
   }), []);
 
@@ -200,14 +206,13 @@ const PdfViewer = forwardRef(function PdfViewer(
             <span
               key={it.key}
               data-hit={highlightTerm && it.str.toLocaleLowerCase().includes(highlightTerm) ? '' : undefined}
+              data-gaze-paragraph={`p${pageNumber}-${it.key}`}
               style={{ left: it.left, top: it.top, fontSize: it.fontSize, fontFamily: it.fontFamily }}
             >
               {it.str}
             </span>
           ))}
         </div>
-        <div className="gaze-wash" ref={washRef} />
-        <div className="gaze-pointer" ref={pointerRef} />
       </div>
     </section>
   );
