@@ -75,3 +75,27 @@ def test_pose_drift_is_optional_and_stored(tmp_path, monkeypatch):
     assert rows[0]["pose_drift_pos"] is None
     assert rows[1]["pose_drift_angle"] == 0.1
     assert c.post("/api/gaze/metrics", json={**BODY, "pose_drift_pos": -1}).status_code == 422
+
+
+def test_summary_compares_finish_modes(tmp_path, monkeypatch):
+    c = make_client(tmp_path, monkeypatch)
+    runs = [
+        ("retrain", 100, 70),
+        ("retrain", 120, 90),
+        ("bias", 110, 100),
+    ]
+    for mode, before, after in runs:
+        body = {**BODY, "accuracy_px": before, "finish_mode": mode, "after_accuracy_px": after}
+        assert c.post("/api/gaze/metrics", json=body).status_code == 201
+    # 마무리 결과가 없는 예전 기록은 비교에서 빠진다
+    assert c.post("/api/gaze/metrics", json=BODY).status_code == 201
+    s = c.get("/api/gaze/metrics/summary").json()["by_finish_mode"]
+    assert s["retrain"]["count"] == 2
+    assert s["retrain"]["before_accuracy_px"] == 110
+    assert s["retrain"]["after_accuracy_px"] == 80
+    assert s["bias"]["after_accuracy_px"] == 100
+
+
+def test_rejects_unknown_finish_mode(tmp_path, monkeypatch):
+    c = make_client(tmp_path, monkeypatch)
+    assert c.post("/api/gaze/metrics", json={**BODY, "finish_mode": "magic"}).status_code == 422

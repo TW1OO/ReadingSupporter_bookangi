@@ -37,6 +37,13 @@ class GazeMetricsIn(BaseModel):
     pose_drift_pos: float | None = Field(default=None, ge=0, le=10)
     pose_drift_size: float | None = Field(default=None, ge=0, le=10)
     pose_drift_angle: float | None = Field(default=None, ge=0, le=10)
+    # 검증 뒤 마무리 방식(retrain: 검증 점까지 재학습, bias: 쏠림 보정)과, 마무리 후 새 위치에서 다시 잰 결과(검증 2).
+    finish_mode: Literal["retrain", "bias"] | None = None
+    after_accuracy_px: float | None = Field(default=None, ge=0, le=5000)
+    after_mean_error_px: float | None = Field(default=None, ge=0, le=5000)
+    after_p90_error_px: float | None = Field(default=None, ge=0, le=5000)
+    after_bias_dx: float | None = Field(default=None, ge=-5000, le=5000)
+    after_bias_dy: float | None = Field(default=None, ge=-5000, le=5000)
     # 어떤 시선 추정기로 쟀는가. 지금은 하나뿐이지만, 비교 실험 때 쌓인 이전 기록(webgazer, mediapipe-poly 등)과 구분하려고 남긴다.
     tracker: Literal["mediapipe"] = "mediapipe"
 
@@ -83,4 +90,31 @@ def summary() -> dict:
     for r in rows:
         # tracker 필드가 생기기 전에 쌓인 행은 WebGazer로 본다.
         by_tracker.setdefault(r.get("tracker", "webgazer"), []).append(r)
-    return {**_stats(rows), "by_tracker": {k: _stats(v) for k, v in by_tracker.items()}}
+    return {
+        **_stats(rows),
+        "by_tracker": {k: _stats(v) for k, v in by_tracker.items()},
+        "by_finish_mode": _finish_stats(rows),
+    }
+
+
+def _mean(rows: list[dict], key: str) -> float | None:
+    vals = [r[key] for r in rows if r.get(key) is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
+def _finish_stats(rows: list[dict]) -> dict:
+    """마무리 방식별로 검증 1(마무리 전)과 검증 2(마무리 후)를 나란히 본다."""
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        if r.get("finish_mode") and r.get("after_accuracy_px") is not None:
+            groups.setdefault(r["finish_mode"], []).append(r)
+    return {
+        mode: {
+            "count": len(g),
+            "before_accuracy_px": _mean(g, "accuracy_px"),
+            "after_accuracy_px": _mean(g, "after_accuracy_px"),
+            "before_mean_error_px": _mean(g, "mean_error_px"),
+            "after_mean_error_px": _mean(g, "after_mean_error_px"),
+        }
+        for mode, g in groups.items()
+    }
