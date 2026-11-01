@@ -5,6 +5,7 @@ front/ (Vite+React+TS)            back/ (FastAPI)
  viewer(mouse) ─┐                 services/hand  (MediaPipe, 팀원 구현)
  front/state ◀─ InputEvent ─┴─ services/gaze  (gazer, 팀원 구현)
  modules/lookup ── fetch /api ──>  services/dictionary  사전 조회 (키는 서버에만)
+ modules/llm ──── SSE /api/llm ──>  services/llm  로컬 LLM(EXAONE GGUF, GPU 서버 전용. docs/LLM_SERVER.md)
 ```
 
 ## 규칙
