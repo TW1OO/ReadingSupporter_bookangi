@@ -7,7 +7,7 @@
  modules/hand ──┐
  modules/gaze ──┼─ InputEvent ─> modules/state ─> pdf-reader 화면
  마우스·키보드 ──┘                                  │
-                                                   ├─ /api/lookup, /api/explain ─> back (FastAPI)
+                                                   ├─ /api/lookup, /api/explain, /api/llm ─> back (FastAPI)
                                                    └─ /api/page-proxy, /api/pdf-proxy ─> front/server (Node)
 ```
 
@@ -21,12 +21,13 @@
 | `shared/` | 모듈 간 계약. `events.ts`(InputEvent), `api.ts`(프론트-백), `camera.ts`(카메라 요청) |
 | `modules/viewer`, `modules/lookup`, `ui/`, `App.tsx` | `/?legacy` 초기 샘플 화면 |
 | `GazeDemo.tsx` | `/?gaze` 시선 실험 화면 |
+| `modules/llm/`, `LlmDemo.tsx` | `/?llm` 로컬 LLM 테스트 화면 (SSE 스트리밍 채팅) |
 
 ## 서버
 | 위치 | 역할 |
 |---|---|
-| `back/app/routers/` | `POST /api/lookup`, `POST /api/explain`, `/api/gaze/metrics`, `GET /api/health` |
-| `back/app/services/` | `morph.py`(원형 복원, Kiwi), `dictionary.py`(우리말샘), `translator.py`(DeepL), `explain.py`(로컬 LLM 자리), `difficulty.py` |
+| `back/app/routers/` | `POST /api/lookup`, `POST /api/explain`, `/api/llm/*`(상태, 로드, 채팅, 풀이), `/api/gaze/metrics`, `GET /api/health` |
+| `back/app/services/` | `morph.py`(원형 복원, Kiwi), `dictionary.py`(우리말샘), `translator.py`(DeepL), `llm.py`(EXAONE GGUF 엔진, `LLM_ENABLED`로 켬), `explain.py`(리더 해설 자리, 아직 `llm.py`와 연결 전), `difficulty.py` |
 | `front/server/` | 글·PDF 프록시 (`pdf-proxy.js`, 127.0.0.1:8001). 사설망 주소를 막는다 |
 
 `back/app/services/hand/hand-test/`는 손 인식 원본 프로토타입(약 27MB)입니다. 실행 경로에서 쓰지 않습니다.
