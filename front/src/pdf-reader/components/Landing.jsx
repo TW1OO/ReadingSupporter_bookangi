@@ -41,7 +41,7 @@ export default function Landing({ dragging, notice, onChooseFile, onOpenUrl, onI
           <div className="or"><span>또는</span></div>
 
           <form onSubmit={submit}>
-            <label className="field-label" htmlFor="urlInput">🔗 링크로 열기</label>
+            <label className="field-label" htmlFor="urlInput">링크로 열기</label>
             <div className="url-row">
               <input
                 id="urlInput" type="url" inputMode="url" autoComplete="off"

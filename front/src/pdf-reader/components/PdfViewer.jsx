@@ -157,7 +157,7 @@ const PdfViewer = forwardRef(function PdfViewer(
         id,
         word: words[i].word,
         context: sentenceText(words, words[i].sentence),
-        rect: { left: rects[i].left + wrap.left, top: rects[i].top + wrap.top, bottom: rects[i].bottom + wrap.top },
+        rect: { left: rects[i].left + wrap.left, right: rects[i].right + wrap.left, top: rects[i].top + wrap.top, bottom: rects[i].bottom + wrap.top },
       };
     },
   }), []);

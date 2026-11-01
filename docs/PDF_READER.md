@@ -19,6 +19,11 @@ cd back && uvicorn app.main:app --reload   # 사전 조회(/api/lookup)
 - PDF 프록시: 사설망 주소 차단, 50MB 제한, 한글 파일명은 RFC 5987로 전달.
 - MediaPipe: 로컬 wasm(`public/mediapipe/wasm`)과 모델을 쓴다. 오프라인 부스에서도 동작.
 
+## 읽기 화면
+- 웹 글과 PDF가 같은 틀을 쓴다(`components/ReaderChrome.jsx`): 위에서 내려오는 머리글과 ⋮ 메뉴, 왼쪽 읽기 도구 패널, 아래 쪽 이동 막대, 오른쪽 위 시선·손 상태 표시.
+- 얼굴이 벗어나면 안내와 위치 그림을 보여 주고, 돌아오면 저절로 닫는다. PDF는 쪽 맞춤으로 열고 이동 막대에서 확대·회전한다.
+- 시선 보정 안내는 `CalibrationOverlay`의 `variant="reader"`로 카메라, 조명, 손 위치를 확인한다.
+
 ## 웹 글 읽기
 - 링크로 연 웹 페이지는 `server/pdf-proxy.js`의 `/api/page-proxy`로 받아 Readability로 본문을 뽑고, `components/ArticleViewer.jsx`가 글자만 그려 양쪽 펼침으로 보여 준다. 원본 HTML은 화면에 넣지 않는다. 그림은 표시하지 않는다.
 - 프록시는 로컬 전용이다. 공개 배포하려면 인증과 호출 제한이 필요하다. 접근을 막은 사이트를 우회하지 않는다.

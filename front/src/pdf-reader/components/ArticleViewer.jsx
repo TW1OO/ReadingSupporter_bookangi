@@ -3,14 +3,14 @@ import { cleanSelection } from '../lib/text.js';
 import { buildWords, nearestWordIndex, sentenceText } from '../lib/pdfWords.js';
 
 const SPREAD_MIN_WIDTH = 820; // 이보다 좁으면 한쪽만 보여 준다
-const GAP = 72;
+const GAP = 104;
 
 /**
  * 웹 글을 책처럼 양쪽 펼침으로 보여 주는 화면. PdfViewer 와 같은 ref(targetAt, wordInfo)를 노출합니다.
  * 원본 HTML 을 넣지 않고 글자만 그립니다. 글자 크기와 줄 간격은 시선 인식을 위해 고정입니다.
  */
 const ArticleViewer = forwardRef(function ArticleViewer(
-  { article, page, gazeRegionId, target, stageRef, onPageCount, onSelectText, onClickPoint },
+  { article, page, gazeRegionId, target, highlightTerm, stageRef, onPageCount, onSelectText, onClickPoint },
   ref
 ) {
   const clipRef = useRef(null);
@@ -82,6 +82,13 @@ const ArticleViewer = forwardRef(function ArticleViewer(
       if (at < 0) return null;
       return { words: shown.map((i) => ({ id: words[i].id, sentence: words[i].sentence })), index: at };
     },
+    // 몇 번째 블록이 몇 쪽에 있는가 (검색 결과로 이동)
+    pageOfBlock(i) {
+      const el = flowRef.current?.querySelector(`[data-gaze-paragraph="a${i}"]`);
+      if (!el) return null;
+      const offset = el.getBoundingClientRect().left - flowRef.current.getBoundingClientRect().left;
+      return Math.floor(offset / (clipRef.current.clientWidth + GAP)) + 1;
+    },
     wordInfo(id) {
       if (!clipRef.current) return null;
       const { words, rects } = measureWords();
@@ -92,7 +99,7 @@ const ArticleViewer = forwardRef(function ArticleViewer(
         id,
         word: words[i].word,
         context: sentenceText(words, words[i].sentence),
-        rect: { left: rects[i].left + clip.left, top: rects[i].top + clip.top, bottom: rects[i].bottom + clip.top },
+        rect: { left: rects[i].left + clip.left, right: rects[i].right + clip.left, top: rects[i].top + clip.top, bottom: rects[i].bottom + clip.top },
       };
     },
   }), []);
@@ -141,13 +148,13 @@ const ArticleViewer = forwardRef(function ArticleViewer(
 
   return (
     <section id="stage" ref={stageRef}>
-      <div className={`article-paper${layout.spread ? ' spread' : ''}`}>
+      <div className="article-paper">
         <div className="article-clip" ref={clipRef}>
           <div className="article-flow" ref={flowRef} onMouseUp={(e) => handleSelection({ x: e.clientX, y: e.clientY })}>
             <h1 className="article-block block-title" data-gaze-paragraph="a-title">{article.title}</h1>
-            <p className="article-source">{article.siteName}</p>
+            <p className="article-source">{article.source ?? article.siteName}</p>
             {article.blocks.map((b, i) => (
-              <div key={i} className={`article-block block-${b.type}`} data-gaze-paragraph={`a${i}`}>{b.text}</div>
+              <div key={i} className={`article-block block-${b.type}${highlightTerm && b.text.toLocaleLowerCase().includes(highlightTerm) ? ' search-hit' : ''}`} data-gaze-paragraph={`a${i}`}>{b.text}</div>
             ))}
             <span data-end />
           </div>
