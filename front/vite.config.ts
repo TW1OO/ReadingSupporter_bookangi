@@ -14,7 +14,7 @@ export default defineConfig({
 		proxy: {
 			"/api/pdf-proxy": { target: PROXY, changeOrigin: true },
 			"/api/page-proxy": { target: PROXY, changeOrigin: true },
-			"/api": "http://localhost:8000",
+			"/api": "http://127.0.0.1:8000",
 		},
 	},
 	test: { environment: "node" },
