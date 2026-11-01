@@ -9,7 +9,11 @@ export const WAVE_DEG = 45 // 손을 양쪽으로 각각 이만큼 기울이면 
 export const WAVE_MS = 2000 // 양쪽 기울이기가 이 시간 안에 모두 나와야 한다
 const ANGLE_SMOOTH = 0.4 // 각도 평활화 (0~1)
 
-export type Shape = 'fist' | 'thumb' | 'confirm' | 'one' | 'two' | 'three' | 'palm' | 'none'
+export const OK_PINCH = 0.3 // 엄지 끝 ↔ 검지 끝 거리 ÷ 손바닥 길이가 이보다 작으면 맞닿은 것으로 본다
+export const PALM_CLICK_MS = 150 // 보정 중 손을 이만큼 펴고 있으면 클릭으로 본다
+export const PALM_REARM_MS = 200 // 손을 이만큼 접거나 내려야 다음 클릭을 받는다
+
+export type Shape = 'fist' | 'thumb' | 'confirm' | 'one' | 'two' | 'three' | 'palm' | 'ok' | 'none'
 
 export type Intent =
   | { kind: 'lock' }
@@ -24,7 +28,9 @@ export type Intent =
 const MENU: Partial<Record<Shape, MenuChoice>> = { one: 'meaning', two: 'explain', three: 'search' }
 
 // 손가락 펴짐 → 손 모양. thumbOpen: 네 손가락을 접었을 때 엄지가 벌어져 있는가
-export function classifyShape(up: Record<FingerName, boolean>, thumbOpen: boolean): Shape {
+// pinch: 엄지와 검지 끝이 맞닿아 있는가. OK 표시는 검지가 굽어 펴짐 판정이 흔들리므로 검지를 보지 않는다.
+export function classifyShape(up: Record<FingerName, boolean>, thumbOpen: boolean, pinch = false): Shape {
+  if (pinch && up.middle && up.ring && up.pinky) return 'ok'
   const four = [up.index, up.middle, up.ring, up.pinky].join()
   if (four === 'false,false,false,false') return thumbOpen ? 'thumb' : 'fist'
   if (four === 'true,false,false,false') return up.thumb ? 'confirm' : 'one'
@@ -82,6 +88,33 @@ export class HoldStabilizer<T = number> {
 }
 
 export type Phase = 'idle' | 'adjusting' | 'menu' | 'result'
+
+export type CalibrationGesture = 'ok' | 'palm'
+
+// 시선 보정 중의 제스처. OK 표시를 유지하면 'ok', 손을 펼 때마다 'palm' 한 번.
+export class CalibrationGestureTracker {
+  private stab = new HoldStabilizer<Shape>()
+  private palmSince: number | null = null
+  private otherSince: number | null = null
+  private armed = false // 처음부터 펴고 있던 손은 클릭으로 세지 않는다
+
+  update(shape: Shape, now: number): CalibrationGesture | null {
+    const held = this.stab.update(shape, now)
+    if (shape === 'palm') {
+      this.otherSince = null
+      if (!this.armed) return null
+      this.palmSince ??= now
+      if (now - this.palmSince < PALM_CLICK_MS) return null
+      this.armed = false
+      this.palmSince = null
+      return 'palm'
+    }
+    this.palmSince = null
+    this.otherSince ??= now
+    if (now - this.otherSince >= PALM_REARM_MS) this.armed = true
+    return held === 'ok' ? 'ok' : null
+  }
+}
 
 // 프레임별 손 모양·각도 → 할 일. 웹캠 없이 테스트한다.
 export class GestureTracker {

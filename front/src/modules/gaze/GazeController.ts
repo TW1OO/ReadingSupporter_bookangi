@@ -5,6 +5,7 @@ import type { ValidationSample } from './calibration';
 import type { TrainSample } from './linearGaze';
 import { MediaPipeBackend, type RawGaze } from './mediapipeBackend';
 import { checkDrift, postureDrift, type Pose, type PostureDrift } from './framing';
+import { measureWordError, nudgeOffset, type GazeSample } from './wordCorrection';
 import {
   DEFAULT_OPTIONS,
   type GazeInputEvent,
@@ -147,6 +148,7 @@ export class GazeController {
     this.filter.reset();
     this.dwell.reset();
     this.region = null;
+    this.offset = { dx: 0, dy: 0 };
     this.setStatus('idle');
   }
 
@@ -154,6 +156,11 @@ export class GazeController {
 
   getPose(): Pose | null {
     return this.backend.getPose();
+  }
+
+  /** 안내 화면에서 카메라 영상을 보여 줄 때 쓴다 */
+  getStream(): MediaStream | null {
+    return this.backend.getStream();
   }
 
   /** 미리보기의 시작 가능 구역 색 (자세가 좋으면 초록) */
@@ -272,6 +279,14 @@ export class GazeController {
   /** 검증에서 잰 쏠림(gaze - target)을 이후 좌표에서 뺀다 */
   applyBias(bias: { dx: number; dy: number }) {
     this.offset = { dx: -bias.dx, dy: -bias.dy };
+  }
+
+  /** 확정한 단어를 보고 있었다고 보고 좌표를 조금 옮긴다. 믿을 수 없는 측정이면 false */
+  correctFromWord(trail: ReadonlyArray<GazeSample>, word: { x: number; y: number }): boolean {
+    const error = measureWordError(trail, word, performance.now());
+    if (!error) return false;
+    this.offset = nudgeOffset(this.offset, error);
+    return true;
   }
 
   async resetTraining() {

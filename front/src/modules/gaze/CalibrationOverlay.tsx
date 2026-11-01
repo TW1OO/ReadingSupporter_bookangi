@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { isBrightEnough, isInHandBox, meanLuma } from './brightness';
 import type { GazeController } from './GazeController';
 import {
   FINISH_MODE_LABEL_KO,
@@ -25,6 +26,7 @@ import {
 import './gaze.css';
 
 const CLICKS_PER_POINT = 4;
+const POINT_DONE_MS = 220;
 /** 자세가 이 시간 동안 계속 좋아야 시작할 수 있다 */
 const FRAMING_STABLE_MS = 800;
 /** 자세 맞추기가 안 풀려도 이 시간이 지나면 그대로 시작할 수 있게 한다(부스 흐름을 막지 않기 위해) */
@@ -37,6 +39,13 @@ interface Props {
   controller: GazeController;
   onDone: (report: CalibrationReport) => void;
   onCancel: () => void;
+  /** reader: 읽기 화면용 안내(카메라 영상 포함, 비교 실험 UI 없음). 기본은 ?gaze 실험 화면 */
+  variant?: 'demo' | 'reader';
+  /** 손 위치 확인용. 손 인식이 꺼져 있으면 null 을 돌려준다 */
+  getHandCenter?: () => { x: number; y: number } | null;
+  handOn?: boolean;
+  /** 손 제스처 구독. ok: 시작·완료, palm: 클릭과 같다. 손 모듈은 앱이 연결한다 */
+  subscribeGesture?: (listener: (g: 'ok' | 'palm') => void) => () => void;
 }
 
 function loadMode(): FinishMode {
@@ -52,12 +61,16 @@ function loadMode(): FinishMode {
  * 보정 점은 "바라보면서 4번 클릭". 클릭 위치는 실제 마우스 좌표가 아니라 점의 중심을 학습시킨다.
  * 검증 2는 보정·검증 1과 겹치지 않는 위치라서 두 마무리 방식의 효과를 공정하게 비교할 수 있다.
  */
-export function CalibrationOverlay({ controller, onDone, onCancel }: Props) {
+export function CalibrationOverlay({ controller, onDone, onCancel, variant = 'demo', getHandCenter, handOn = false, subscribeGesture }: Props) {
+  const reader = variant === 'reader';
   const [phase, setPhase] = useState<Phase>('intro');
   const [idx, setIdx] = useState(0);
   const [clicks, setClicks] = useState(0);
   const [measuring, setMeasuring] = useState(false);
-  const [mode, setMode] = useState<FinishMode>(loadMode);
+  const [mode, setMode] = useState<FinishMode>(() => (reader ? 'retrain' : loadMode()));
+  const [bright, setBright] = useState<boolean | null>(null);
+  const [handIn, setHandIn] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const [before, setBefore] = useState<ValidationResult | null>(null);
   const [report, setReport] = useState<CalibrationReport | null>(null);
   const [copied, setCopied] = useState(false);
@@ -92,8 +105,26 @@ export function CalibrationOverlay({ controller, onDone, onCancel }: Props) {
 
   // 안내 화면에서만 카메라 미리보기 (점 위치와 겹치지 않게)
   useEffect(() => {
-    controller.setPreview(phase === 'intro');
-  }, [controller, phase]);
+    controller.setPreview(!reader && phase === 'intro');
+  }, [controller, phase, reader]);
+
+  // 읽기 화면 안내: 카메라 영상을 카드 안에 보여 주고 조명과 손 위치를 확인한다
+  useEffect(() => {
+    if (!reader || phase !== 'intro') return;
+    const video = videoRef.current;
+    if (video) video.srcObject = controller.getStream();
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 24;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const id = window.setInterval(() => {
+      setHandIn(isInHandBox(getHandCenter?.()));
+      if (!video || !ctx || video.readyState < 2) return;
+      ctx.drawImage(video, 0, 0, 32, 24);
+      setBright(isBrightEnough(meanLuma(ctx.getImageData(0, 0, 32, 24).data)));
+    }, 400);
+    return () => window.clearInterval(id);
+  }, [controller, phase, reader, getHandCenter]);
 
   useEffect(() => {
     try {
@@ -145,18 +176,25 @@ export function CalibrationOverlay({ controller, onDone, onCancel }: Props) {
   }, [onCancel]);
 
   const handleTargetClick = useCallback(() => {
+    if (clicks >= CLICKS_PER_POINT) return;
     const p = calPoints[idx];
     controller.recordCalibrationClick(p.x, p.y);
-    const next = clicks + 1;
-    if (next >= CLICKS_PER_POINT) {
+    setClicks(clicks + 1);
+  }, [calPoints, clicks, controller, idx]);
+
+  // 네 칸이 다 찬 모습을 잠깐 보여 준 뒤 다음 점으로 넘어간다
+  useEffect(() => {
+    if (phase !== 'calibrate' || clicks < CLICKS_PER_POINT) return;
+    const id = window.setTimeout(() => {
       setClicks(0);
       if (idx + 1 >= calPoints.length) {
         samples.current = [];
         setPhase('validate');
         setIdx(0);
       } else setIdx(idx + 1);
-    } else setClicks(next);
-  }, [calPoints, clicks, controller, idx]);
+    }, POINT_DONE_MS);
+    return () => window.clearTimeout(id);
+  }, [phase, clicks, idx, calPoints.length]);
 
   // 검증 1 / 검증 2: 점마다 자동 수집
   useEffect(() => {
@@ -241,6 +279,14 @@ export function CalibrationOverlay({ controller, onDone, onCancel }: Props) {
     if (report) onDone(report);
   };
 
+  const onGesture = useRef<(g: 'ok' | 'palm') => void>(() => {});
+  onGesture.current = (g) => {
+    if (g === 'palm' && phase === 'calibrate') handleTargetClick();
+    if (g === 'ok' && phase === 'intro' && (framingStable || framingOverride)) restart();
+    if (g === 'ok' && phase === 'result') finish();
+  };
+  useEffect(() => subscribeGesture?.((g) => onGesture.current(g)), [subscribeGesture]);
+
   const reportText = report ? formatReport(report) : '';
   const copy = async () => {
     try {
@@ -255,8 +301,34 @@ export function CalibrationOverlay({ controller, onDone, onCancel }: Props) {
   const measurePoints = phase === 'validate' ? valPoints : recheckPoints;
 
   return (
-    <div className="gz-scrim" role="dialog" aria-modal="true" aria-label="시선 보정">
-      {phase === 'intro' && (
+    <div className={`gz-scrim${reader && (phase === 'intro' || phase === 'result') ? ' gz-scrim--soft' : ''}`} role="dialog" aria-modal="true" aria-label="시선 보정">
+      {reader && phase === 'intro' && (
+        <div className="gz-setup">
+          <small>시작 전 한 번만</small>
+          <h2>카메라 위치를 맞춰 주세요</h2>
+          <div className="gz-setup-view">
+            <video ref={videoRef} autoPlay muted playsInline />
+            <span className={`gz-face-chip${poseText !== '얼굴 없음' && poseText ? ' ok' : ''}`}>
+              <i />{poseText !== '얼굴 없음' && poseText ? '얼굴 인식됨' : '얼굴을 찾는 중'}
+            </span>
+            <div className={`gz-face-oval${framing.ok ? ' ok' : ''}`} />
+            <div className={`gz-hand-box${handIn ? ' ok' : ''}`}><span>손 위치</span></div>
+          </div>
+          <ul className="gz-checks">
+            <li className={framing.ok ? 'ok' : ''}>{framing.ok ? '얼굴이 화면 가운데에 있어요' : framing.hints[0] || '얼굴 위치를 확인하는 중이에요'}</li>
+            <li className={bright ? 'ok' : ''}>{bright === null ? '조명을 확인하는 중이에요' : bright ? '조명이 충분해요' : '조금 더 밝은 곳으로 옮겨 주세요'}</li>
+            <li className={handIn ? 'ok' : ''}>{!handOn ? '손 인식은 읽기 도구에서 켤 수 있어요' : handIn ? '손이 상자 안에 있어요' : '손을 오른쪽 아래 상자 안에 들어 주세요'}</li>
+          </ul>
+          <p>다음으로 화면에 나타나는 점 {calPoints.length}개를 차례로 바라보며 {handOn ? '손을 펴거나 클릭해' : '클릭해'} 시선을 보정해요. {handOn && '준비되면 손으로 OK 표시를 해 주세요. '}보정이 끝나면 카메라 화면은 사라지고, 오른쪽 위 작은 표시로만 인식 상태를 알려 드려요. 카메라 영상은 이 기기 안에서만 처리돼요.</p>
+          <div className="gz-actions">
+            <button className="gz-btn" onClick={onCancel}>나중에</button>
+            <button className="gz-btn gz-btn--primary" onClick={restart} disabled={!framingStable && !framingOverride}>
+              {framingStable || framingOverride ? '시선 보정 시작' : '자세를 맞춰 주세요'}
+            </button>
+          </div>
+        </div>
+      )}
+      {!reader && phase === 'intro' && (
         <div className="gz-card">
           <h2>시선 보정</h2>
           <p>화면에 나타나는 점을 바라보며 각각 4번 클릭해 주세요. 약 1분 걸립니다.</p>
@@ -306,11 +378,11 @@ export function CalibrationOverlay({ controller, onDone, onCancel }: Props) {
       {phase === 'calibrate' && (
         <>
           <div className="gz-hud">
-            점을 보며 클릭 · {idx + 1}/{calPoints.length} ({clicks}/{CLICKS_PER_POINT})
+            점을 보며 {handOn ? '손을 펴거나 클릭' : '클릭'} · {idx + 1}/{calPoints.length} ({clicks}/{CLICKS_PER_POINT})
           </div>
           <button
             key={idx}
-            className="gz-target gz-target--idle"
+            className="gz-target gz-target--clicks"
             style={
               {
                 left: calPoints[idx].x,
@@ -319,7 +391,7 @@ export function CalibrationOverlay({ controller, onDone, onCancel }: Props) {
               } as CSSProperties
             }
             onClick={handleTargetClick}
-            aria-label={`보정 점 ${idx + 1}`}
+            aria-label={`보정 점 ${idx + 1}, ${clicks}/${CLICKS_PER_POINT}번 클릭함`}
           />
         </>
       )}
@@ -340,7 +412,19 @@ export function CalibrationOverlay({ controller, onDone, onCancel }: Props) {
         </>
       )}
 
-      {phase === 'result' && report && (
+      {reader && phase === 'result' && report && (
+        <div className="gz-setup gz-setup--result">
+          <small>시선 보정 완료</small>
+          <h2>보정 결과: {GRADE_LABEL_KO[report.after.grade]}</h2>
+          <p>시선 오차는 약 {px(report.after.accuracyPx)}예요. 문장을 대략 잡는 데 쓰고, 단어는 제스처로 맞춰 고르면 돼요.</p>
+          {report.after.grade === 'poor' && <p>오차가 커요. 조명을 밝게 하고 카메라와 눈높이를 맞춘 뒤 다시 보정해 보세요.</p>}
+          <div className="gz-actions">
+            <button className="gz-btn" onClick={retry}>다시 보정</button>
+            <button className="gz-btn gz-btn--primary" onClick={finish}>읽기 시작</button>
+          </div>
+        </div>
+      )}
+      {!reader && phase === 'result' && report && (
         <div className="gz-card">
           <h2>보정 결과: {GRADE_LABEL_KO[report.after.grade]}</h2>
           <table className="gz-compare">

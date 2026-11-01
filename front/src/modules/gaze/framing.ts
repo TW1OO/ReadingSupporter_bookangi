@@ -32,7 +32,8 @@ export const FRAMING = {
   // 절대 기준은 "극단적으로 벗어난 경우"만 막는다. 노트북 웹캠 팔 길이(약 50cm)에서 얼굴 폭이 0.2 안팎이고,
   // 카메라가 위에 있으면 화면을 볼 때 pitch가 10~20°라서 엄격하게 잡으면 맞출 수가 없다.
   // 자세가 "일정하게 유지되는가"는 시작 때를 기준으로 하는 상대 기준(REL)이 맡는다.
-  ABS: { xy: [0.25, 0.75], size: [0.14, 0.65], angle: 0.5 },
+  // 오토 프레이밍 창이 얼굴을 따라가므로 얼굴이 창에서 잘리지 않는 데까지 허용한다.
+  ABS: { x: [0.12, 0.88], y: [0.2, 0.8], size: [0.1, 0.65], angle: 0.5 },
   REL: { pos: 0.06, size: 0.1, angle: 0.12 },
 } as const;
 
@@ -81,12 +82,12 @@ export interface FramingCheck {
  */
 export function checkFraming(p: Pose | null): FramingCheck {
   if (!p) return { ok: false, hints: ['얼굴이 인식되지 않습니다'] };
-  const { xy, size, angle } = FRAMING.ABS;
+  const { x, y, size, angle } = FRAMING.ABS;
   const hints: string[] = [];
-  if (p.x < xy[0]) hints.push('조금 왼쪽으로 이동해 주세요');
-  else if (p.x > xy[1]) hints.push('조금 오른쪽으로 이동해 주세요');
-  if (p.y < xy[0]) hints.push('조금 낮춰 주세요');
-  else if (p.y > xy[1]) hints.push('조금 높여 주세요');
+  if (p.x < x[0]) hints.push('조금 왼쪽으로 이동해 주세요');
+  else if (p.x > x[1]) hints.push('조금 오른쪽으로 이동해 주세요');
+  if (p.y < y[0]) hints.push('조금 낮춰 주세요');
+  else if (p.y > y[1]) hints.push('조금 높여 주세요');
   if (p.size < size[0]) hints.push('카메라에 조금 더 가까이 와 주세요');
   else if (p.size > size[1]) hints.push('카메라에서 조금 떨어져 주세요');
   if (Math.hypot(p.yaw, p.pitch) > angle) hints.push('화면 정면을 바라봐 주세요');

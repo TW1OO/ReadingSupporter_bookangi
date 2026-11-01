@@ -26,6 +26,7 @@ interface Rule { key: string; level: GuideLevel; msg: string }
 export interface PostureResult {
   key: string | null; level: GuideLevel; msg: string
   blocked: boolean; palm: number; flips: number; score: number
+  outOfRange: boolean // 이번 프레임에 손이 화면 끝에 걸렸거나 너무 멀거나 가깝다 (흔들림은 포함하지 않는다)
 }
 
 // 우선순위 순서 (위에 있을수록 먼저 안내)
@@ -89,6 +90,6 @@ export class PostureGuard {
     // 화면 끝·크기는 즉시 막아야 오선택이 안 생김 (이번 프레임 기준)
     const instantBlock = now_.has("edge") || now_.has("far") || now_.has("near");
     const g: { key: string | null; level: GuideLevel; msg: string } = this.shown || { key: null, level: 'ok', msg: '' };
-    return { ...g, blocked: g.level === "block" || instantBlock, palm, flips, score };
+    return { ...g, blocked: g.level === "block" || instantBlock, outOfRange: instantBlock, palm, flips, score };
   }
 }

@@ -1,8 +1,9 @@
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision'
+import { WIDE_VIDEO } from '@/shared/camera'
 import type { InputEvent, TargetWord } from '@/shared/events'
 import { fingersUp, thumbOpen, type FingerName } from './fingers'
 import { PostureGuard, type GuideLevel } from './posture'
-import { GestureTracker, VOTE_N, classifyShape, majority, tiltDeg, type Intent, type Phase, type Shape } from './gestures'
+import { CalibrationGestureTracker, GestureTracker, OK_PINCH, VOTE_N, classifyShape, majority, tiltDeg, type CalibrationGesture, type Intent, type Phase, type Shape } from './gestures'
 
 export interface HandGuide {
   level: GuideLevel
@@ -14,6 +15,7 @@ export interface HandFrame {
   count: number // 펴진 손가락 개수
   shape: Shape // 다수결로 정한 손 모양
   thumbDeg: number // 엄지 기울기. 양수면 오른쪽
+  center: { x: number; y: number } // 손바닥 중심 (거울 화면 기준, 0~1)
   up: Record<FingerName, boolean>
   blocked: boolean
   score: number // MediaPipe 손 인식 확신도
@@ -26,6 +28,9 @@ export interface HandOptions {
   getTarget?: () => { words: TargetWord[]; index: number } | null
   // 읽는 중 손바닥을 유지했을 때. 쪽 넘기기 여부는 앱이 시선을 보고 정한다
   onPalmHeld?: () => void
+  // 시선 보정 중인가. 이때는 읽기 제스처를 내지 않고 보정 제스처만 알린다
+  isCalibrating?: () => boolean
+  onCalibrationGesture?: (g: CalibrationGesture) => void
   onGuide?: (g: HandGuide) => void
   onFrame?: (f: HandFrame | null) => void // 손이 안 보이면 null
   onError?: (e: Error) => void
@@ -63,7 +68,7 @@ export function startHandInput(emit: (ev: InputEvent) => void, opts: HandOptions
     hands = landmarker
     if (stopped) return
 
-    const s = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
+    const s = await navigator.mediaDevices.getUserMedia({ video: WIDE_VIDEO })
     stream = s
     if (stopped) return
     const { video } = opts
@@ -75,6 +80,7 @@ export function startHandInput(emit: (ev: InputEvent) => void, opts: HandOptions
     let wasThumbOpen = false
     const guard = new PostureGuard()
     const tracker = new GestureTracker()
+    const calibration = new CalibrationGestureTracker()
     let lastGuideKey: string | null = null
     let lastT = -1
 
@@ -110,15 +116,21 @@ export function startHandInput(emit: (ev: InputEvent) => void, opts: HandOptions
       if (video.currentTime !== lastT) {
         lastT = video.currentTime
         const res = landmarker.detectForVideo(video, now)
+        const calibrating = opts.isCalibrating?.() ?? false
+        const calibrationInput = (shape: Shape) => {
+          const g = calibration.update(shape, now)
+          if (g) opts.onCalibrationGesture?.(g)
+        }
         if (!res.landmarks.length) {
           clearHand()
+          if (calibrating) calibrationInput('none')
         } else {
           const lm = res.landmarks[0]
           const aspect = video.videoWidth / video.videoHeight
           const f = fingersUp(res.worldLandmarks[0], lm, prevUp, aspect)
           prevUp = f.up
           wasThumbOpen = thumbOpen(f.m, wasThumbOpen)
-          votes.push(classifyShape(f.up, wasThumbOpen))
+          votes.push(classifyShape(f.up, wasThumbOpen, f.m.thumb.pinch < OK_PINCH))
           if (votes.length > VOTE_N) votes.shift()
           const shape = majority(votes)
           const thumbDeg = tiltDeg(lm[2], lm[4], aspect)
@@ -133,15 +145,20 @@ export function startHandInput(emit: (ev: InputEvent) => void, opts: HandOptions
             opts.onGuide?.(guideKey === g.key ? { level: g.level, msg: g.msg } : { level: 'ok', msg: '' })
           }
 
-          opts.onFrame?.({ count: f.count, shape, thumbDeg, up: f.up, blocked: g.blocked, score: g.score })
+          opts.onFrame?.({ count: f.count, shape, thumbDeg, center: { x: 1 - lm[9].x, y: lm[9].y }, up: f.up, blocked: g.blocked, score: g.score })
 
-          const intent = tracker.update(
-            { shape, thumbDeg, palmDeg: tiltDeg(lm[0], lm[9], aspect) },
-            opts.getPhase(),
-            now,
-            g.blocked,
-          )
-          if (intent) act(intent)
+          if (calibrating) {
+            // 보정 중에는 접고 펴는 것이 정상 동작이라 흔들림 차단을 적용하지 않는다
+            calibrationInput(g.outOfRange ? 'none' : shape)
+          } else {
+            const intent = tracker.update(
+              { shape, thumbDeg, palmDeg: tiltDeg(lm[0], lm[9], aspect) },
+              opts.getPhase(),
+              now,
+              g.blocked,
+            )
+            if (intent) act(intent)
+          }
         }
       }
       raf = requestAnimationFrame(loop)
