@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { htmlToBlocks, looksLikePdf, parseArticle } from './webArticle.js';
+import { htmlToBlocks, looksLikePdf, parseArticle, sourceLabel, superscriptRefs } from './webArticle.js';
 
 const blocks = (html) => htmlToBlocks(new DOMParser().parseFromString(html, 'text/html').body);
 
@@ -24,6 +24,9 @@ describe('htmlToBlocks', () => {
     expect(blocks('<p>본문</p><script>alert(1)</script><style>p{}</style><button>공유</button><p> ... </p>')).toEqual([
       { type: 'text', text: '본문' },
     ]);
+  });
+  it('그림과 그림 설명은 뺀다', () => {
+    expect(blocks('<p>본문</p><figure><img src="x"><figcaption>3세대 킨들</figcaption></figure>').map((b) => b.text)).toEqual(['본문']);
   });
   it('태그처럼 보이는 글자도 글자로만 다룬다', () => {
     expect(blocks('<p>&lt;img src=x onerror=alert(1)&gt;</p>')[0].text).toBe('<img src=x onerror=alert(1)>');
@@ -70,6 +73,17 @@ describe('wiki 문서', () => {
       { type: 'text', text: '컴퓨터는 계산하는 기계이다.안쪽 문단' },
       { type: 'text', text: '둘째 문단이다.' },
     ]);
+  });
+});
+
+describe('표시용 글자', () => {
+  it('각주 번호를 위첨자로 바꾼다', () => {
+    expect(superscriptRefs('출판물이다.[1] 때로는[23] 값[x]')).toBe('출판물이다.¹ 때로는²³ 값[x]');
+  });
+  it('위키백과와 나무위키는 라이선스를 표시한다', () => {
+    expect(sourceLabel('ko.wikipedia.org', '위키미디어 재단')).toBe('위키백과 · CC BY-SA 4.0');
+    expect(sourceLabel('namu.wiki')).toContain('나무위키');
+    expect(sourceLabel('www.yna.co.kr', '연합뉴스')).toBe('연합뉴스');
   });
 });
 

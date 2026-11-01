@@ -18,6 +18,10 @@ describe('buildWords', () => {
     const w = buildWords(plain('“끝내야 해”. 그렇게 말했다'));
     expect(w.map((x) => x.sentence)).toEqual([0, 0, 1, 1]);
   });
+  it('각주 번호는 단어가 아니고, 문장 끝도 그대로 인식한다', () => {
+    const w = buildWords(plain('출판물이다.¹ 때로는²³ 다르다'));
+    expect(w.map((x) => [x.word, x.sentence])).toEqual([['출판물이다', 0], ['때로는', 1], ['다르다', 1]]);
+  });
   it('소수점은 문장 끝이 아니다', () => {
     expect(buildWords(plain('값은 3.5 정도다')).every((x) => x.sentence === 0)).toBe(true);
   });
