@@ -1,5 +1,5 @@
 import type { RefObject } from 'react'
-import type { HandFrame, HandGuide, HandPointer } from '@/modules/hand'
+import type { HandFrame, HandGuide } from '@/modules/hand'
 
 const FINGERS = [
   ['thumb', '엄지'],
@@ -9,18 +9,17 @@ const FINGERS = [
   ['pinky', '새끼'],
 ] as const
 
-// 웹캠 미리보기 + 자세 안내 + 포인터 점. 모듈 로직은 넣지 않는다.
+// 웹캠 미리보기 + 자세 안내. 모듈 로직은 넣지 않는다.
 export function HandPanel(props: {
   videoRef: RefObject<HTMLVideoElement>
   enabled: boolean
   onToggle: () => void
   guide: HandGuide | null
-  pointer: HandPointer | null
   error: string | null
   frame: HandFrame | null
   events: string[]
 }) {
-  const { videoRef, enabled, onToggle, guide, pointer, error, frame, events } = props
+  const { videoRef, enabled, onToggle, guide, error, frame, events } = props
   return (
     <>
       <aside style={{ position: 'fixed', right: 16, bottom: 16, width: 240, zIndex: 20 }}>
@@ -84,23 +83,6 @@ export function HandPanel(props: {
           {enabled ? '손 인식 끄기' : '손 인식 켜기'}
         </button>
       </aside>
-      {pointer && (
-        <div
-          style={{
-            position: 'fixed',
-            left: pointer.x,
-            top: pointer.y,
-            width: 22,
-            height: 22,
-            borderRadius: '50%',
-            transform: 'translate(-50%, -50%)',
-            pointerEvents: 'none',
-            zIndex: 30,
-            background: `rgba(255, 77, 77, ${0.35 + 0.65 * pointer.progress})`,
-            boxShadow: `0 0 0 ${Math.round(pointer.progress * 8)}px rgba(255, 77, 77, 0.25)`,
-          }}
-        />
-      )}
     </>
   )
 }

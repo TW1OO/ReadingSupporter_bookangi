@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fingersUp } from './fingers'
+import { fingersUp, thumbOpen } from './fingers'
 
 // 위를 향한 손의 합성 랜드마크. ext = [엄지, 검지, 중지, 약지, 새끼] 펴짐 여부.
 function hand(ext: boolean[]) {
@@ -44,5 +44,12 @@ describe('fingersUp', () => {
     ['활짝', [true, true, true, true, true], 5],
   ])('%s → %i개', (_n, ext, count) => {
     expect(hand(ext as boolean[]).count).toBe(count)
+  })
+})
+
+describe('thumbOpen', () => {
+  it('엄지를 벌리면 true, 주먹이면 false', () => {
+    expect(thumbOpen(hand([true, false, false, false, false]).m)).toBe(true)
+    expect(thumbOpen(hand([false, false, false, false, false]).m)).toBe(false)
   })
 })

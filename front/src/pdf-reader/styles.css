@@ -8,5 +8,34 @@
 .hand-camera{display:none;width:100%;aspect-ratio:4/3;object-fit:cover;background:#111;border-radius:8px;transform:scaleX(-1)}
 .hand-camera.active{display:block}
 
-.hand-pointer{position:fixed;z-index:850;width:18px;height:18px;border-radius:50%;border:3px solid #f97316;background:#f9731640;transform:translate(-50%,-50%);pointer-events:none;box-shadow:0 0 0 6px #f9731622}
 @media(max-width:650px){}
+
+/* 시선·제스처 단어 조정 */
+.target-sentence{position:absolute;z-index:2;pointer-events:none;background:#f5a33b24;border-radius:2px}
+.target-sentence.active{background:#f5a33b5c}
+.target-word{position:absolute;z-index:3;pointer-events:none;background:#f5a33b66;outline:2px solid #e07f12;border-radius:3px;scroll-margin:48px}
+.flow-guide{position:fixed;left:50%;bottom:40px;z-index:900;transform:translateX(-50%);max-width:calc(100vw - 32px);padding:9px 16px;border-radius:999px;background:#1e293bf0;color:#fff;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+.dwell-toggle{cursor:pointer}
+.dwell-toggle input{flex:none;margin:0}
+.hand-debug{padding:5px 4px;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+
+/* 웹 글: 책처럼 펼친 화면 */
+.article-paper{position:relative;flex:1;align-self:stretch;min-width:0;padding:32px 44px;background:var(--paper);color:#1f2937;border-radius:6px;box-shadow:0 6px 24px #0f172a29}
+.article-paper.spread::before{content:"";position:absolute;left:50%;top:32px;bottom:32px;width:1px;background:var(--paper-line)}
+.article-clip{position:relative;width:100%;height:100%;overflow:hidden}
+.article-flow{height:100%;column-fill:auto;font-family:"Noto Serif KR",Batang,Georgia,serif;font-size:20px;line-height:1.9;word-break:keep-all;overflow-wrap:anywhere;cursor:text}
+.article-block{margin:0 0 .75em}
+.article-block.gaze-best{background:#f5a33b18;border-radius:4px}
+.block-title{margin:0 0 .2em;font-family:Inter,"Noto Sans KR",sans-serif;font-size:28px;line-height:1.35;font-weight:800;break-after:avoid}
+.article-source{margin:0 0 1.4em;color:#64748b;font:13px/1.4 Inter,"Noto Sans KR",sans-serif}
+.block-heading{margin-top:.9em;font-family:Inter,"Noto Sans KR",sans-serif;font-size:23px;line-height:1.4;font-weight:700;break-after:avoid}
+.block-subheading{margin-top:.6em;font-family:Inter,"Noto Sans KR",sans-serif;font-weight:700;break-after:avoid}
+.block-item{position:relative;padding-left:1.1em}
+.block-item::before{content:"•";position:absolute;left:.15em}
+.block-code{font-family:ui-monospace,Consolas,monospace;font-size:17px;line-height:1.7;background:#0f172a0d;padding:.5em .7em;border-radius:6px}
+@media (max-width:900px){.article-paper{padding:20px}}
+
+/* 쪽 넘기기: 시선이 화면 끝에 있음을 알린다 */
+.edge-glow{position:fixed;top:0;bottom:0;width:56px;z-index:880;pointer-events:none}
+.edge-glow.left{left:0;background:linear-gradient(to right,#f5a33b55,transparent)}
+.edge-glow.right{right:0;background:linear-gradient(to left,#f5a33b55,transparent)}

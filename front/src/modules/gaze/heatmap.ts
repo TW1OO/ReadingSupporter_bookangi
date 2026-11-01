@@ -25,6 +25,14 @@ export const DEFAULT_HEATMAP: HeatmapOptions = {
   maxAlpha: 0.5,
 };
 
+/** 읽기 화면용: 글을 방해하지 않도록 옅고, 시선을 바로 따라오도록 금방 사라진다 */
+export const READING_HEATMAP: HeatmapOptions = {
+  ...DEFAULT_HEATMAP,
+  halfLifeMs: 900,
+  saturation: 6, // 움직이는 시선은 한곳에 적게 쌓이므로 적은 양에도 색이 보이게 한다
+  maxAlpha: 0.34,
+};
+
 // 연한 주황 → 진한 주황
 const LIGHT = [255, 204, 150];
 const DEEP = [230, 106, 18];

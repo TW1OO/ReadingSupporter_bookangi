@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_HEATMAP, GazeHeatmap, heatColor } from './heatmap';
+import { DEFAULT_HEATMAP, GazeHeatmap, READING_HEATMAP, heatColor } from './heatmap';
 
 describe('heatColor', () => {
   it('쌓인 양이 많을수록 불투명하고 진한(초록·파랑이 적은) 주황이 된다', () => {
@@ -59,5 +59,19 @@ describe('GazeHeatmap', () => {
     const center = (Math.floor(20 / 8) * h.cols + Math.floor(40 / 8)) * 4;
     expect(out[center + 3]).toBeGreaterThan(0);
     expect(out[3]).toBeLessThan(out[center + 3]); // 모서리는 더 옅다
+  });
+});
+
+describe('READING_HEATMAP', () => {
+  it('오래 봐도 기본보다 옅다', () => {
+    expect(heatColor(1e6, READING_HEATMAP).a).toBeLessThanOrEqual(READING_HEATMAP.maxAlpha);
+    expect(READING_HEATMAP.maxAlpha).toBeLessThan(DEFAULT_HEATMAP.maxAlpha);
+  });
+  it('지나온 자리는 1초 뒤 절반 아래로 옅어진다', () => {
+    const h = new GazeHeatmap(800, 600, READING_HEATMAP);
+    for (let i = 0; i < 30; i++) h.add(200, 300);
+    const before = h.intensityAt(200, 300);
+    h.decay(1000);
+    expect(h.intensityAt(200, 300)).toBeLessThan(before / 2);
   });
 });

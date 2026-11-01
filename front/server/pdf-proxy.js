@@ -2,9 +2,11 @@ import http from 'node:http';
 import dns from 'node:dns/promises';
 import net from 'node:net';
 import { contentDisposition } from './filename.js';
+import { decodeHtml, isHtmlType } from './html.js';
 
 const PORT = Number(process.env.PDF_PROXY_PORT || 8001);
 const MAX_BYTES = 50 * 1024 * 1024;
+const MAX_PAGE_BYTES = 8 * 1024 * 1024;
 const REDIRECT_CODES = new Set([301, 302, 303, 307, 308]);
 
 function isPrivateIPv4(ip) {
@@ -41,10 +43,10 @@ async function validatePublicUrl(value) {
   }
   return url;
 }
-async function fetchWithSafeRedirects(rawUrl) {
+async function fetchWithSafeRedirects(rawUrl, userAgent = 'Bookhang-PDF-Reader/1.0') {
   let url = await validatePublicUrl(rawUrl);
   for (let i = 0; i <= 5; i++) {
-    const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(30000), headers: { 'User-Agent': 'Bookhang-PDF-Reader/1.0' } });
+    const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(30000), headers: { 'User-Agent': userAgent } });
     if (!REDIRECT_CODES.has(response.status)) return { response, url };
     const location = response.headers.get('location');
     if (!location) return { response, url };
@@ -54,6 +56,40 @@ async function fetchWithSafeRedirects(rawUrl) {
   throw new Error('PDF 링크를 열 수 없습니다.');
 }
 
+const sendJson = (res, status, body) => {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }).end(JSON.stringify(body));
+};
+
+// 웹 글 읽기: HTML 을 글자로 바꿔 JSON 으로 돌려준다. 화면에서 본문 글자만 뽑아 쓴다.
+async function servePage(target, res) {
+  try {
+    const { response, url } = await fetchWithSafeRedirects(target, 'Bookhang-Reader/1.0');
+    if ([401, 403, 429, 503].includes(response.status)) return sendJson(res, 403, { error: `이 사이트가 외부 접근을 막았습니다. (${response.status})` });
+    if (!response.ok) return sendJson(res, response.status, { error: `원본 서버 오류: ${response.status}` });
+    const contentType = response.headers.get('content-type') || '';
+    if (/application\/pdf/i.test(contentType)) return sendJson(res, 415, { pdf: true });
+    if (!isHtmlType(contentType)) return sendJson(res, 415, { error: '웹 문서나 PDF 주소만 열 수 있습니다.' });
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_PAGE_BYTES) {
+        await reader.cancel();
+        return sendJson(res, 413, { error: '페이지가 너무 커서 열 수 없습니다.' });
+      }
+      chunks.push(Buffer.from(value));
+    }
+    const body = Buffer.concat(chunks);
+    if (body.subarray(0, 5).toString() === '%PDF-') return sendJson(res, 415, { pdf: true });
+    sendJson(res, 200, { url: url.href, html: decodeHtml(body, contentType) });
+  } catch (err) {
+    sendJson(res, 400, { error: err?.name === 'TimeoutError' ? '서버 응답 시간이 초과되었습니다.' : (err?.message || '페이지를 가져오지 못했습니다.') });
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   // 개발 중에는 Vite 프록시(같은 출처)로 호출하므로 CORS 헤더가 필요 없다. 별도 배포 때만 허용 출처를 지정한다.
   if (process.env.PDF_PROXY_ALLOW_ORIGIN) res.setHeader('Access-Control-Allow-Origin', process.env.PDF_PROXY_ALLOW_ORIGIN);
@@ -61,6 +97,11 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') { res.writeHead(204).end(); return; }
   const requestUrl = new URL(req.url, 'http://localhost');
+  if (req.method === 'GET' && requestUrl.pathname === '/api/page-proxy') {
+    const page = requestUrl.searchParams.get('url');
+    if (!page) return sendJson(res, 400, { error: '주소가 필요합니다.' });
+    return servePage(page, res);
+  }
   if (req.method !== 'GET' || requestUrl.pathname !== '/api/pdf-proxy') {
     res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'Not found' })); return;
   }

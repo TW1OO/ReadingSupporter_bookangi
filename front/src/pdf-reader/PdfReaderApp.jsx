@@ -1,25 +1,52 @@
 import './styles.css';
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { initialState, reduce } from '@/modules/state/machine';
 import { startHandInput } from '@/modules/hand';
-import { CalibrationOverlay, toInputEvent, useGaze } from '@/modules/gaze';
+import { CalibrationOverlay, GazeHeatLayer, READING_HEATMAP, toInputEvent, useGaze } from '@/modules/gaze';
 import Header from './components/Header.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Toolbar from './components/Toolbar.jsx';
 import SearchBar from './components/SearchBar.jsx';
 import PdfViewer from './components/PdfViewer.jsx';
+import ArticleViewer from './components/ArticleViewer.jsx';
 import WordPopup from './components/WordPopup.jsx';
 import StatusBar from './components/StatusBar.jsx';
 import DropOverlay from './components/DropOverlay.jsx';
 import Landing from './components/Landing.jsx';
 import InfoModal from './components/InfoModal.jsx';
 import { SCALE, clamp, isPdfFile, openPdf, fetchRemoteFile } from './lib/pdf.js';
+import { fetchArticle, looksLikePdf } from './lib/webArticle.js';
+import { averageX, gazeEdge } from './lib/gazeEdge.js';
 import { usePdfSearch } from './hooks/usePdfSearch.js';
 import { useFileDrop } from './hooks/useFileDrop.js';
+
+const HAND_READY = '손 인식 중 · 엄지를 들어 단어 지정';
+const NO_TEXT = '이 쪽에는 고를 글자가 없습니다. 이미지·스캔으로 된 내용은 아직 고를 수 없어요.';
+const DWELL_KEY = 'bookangi.dwellLock';
+const DWELL_MS = 1000; // 시선이 이만큼 머물면 문장 지정
+const GAZE_WINDOW_MS = 500; // 엄지를 들 때 이 시간의 시선 평균을 쓴다
+const RELOCK_MS = 2000; // 닫은 직후에는 시선 멈춤으로 다시 지정하지 않는다
+const ADJUST_TIMEOUT_MS = 10000; // 조정 중 입력이 없으면 읽기로 돌아간다
+const SHAPE_LABEL = { fist: '주먹', thumb: '엄지', confirm: '엄지+검지', one: '1', two: '2', three: '3', palm: '손 폄', none: '-' };
+
+function loadDwell() {
+  try {
+    return localStorage.getItem(DWELL_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+const GUIDE = {
+  word: '엄지 기울이기: 앞뒤 단어 · 엄지+검지: 확정 · 손 펴기: 문장 바꾸기 · 주먹: 취소',
+  sentence: '엄지 기울이기: 앞뒤 문장 · 엄지+검지: 문장 결정 · 주먹: 취소',
+  result: '손을 펴고 좌우로 흔들면 닫습니다 · 주먹: 취소',
+};
 
 export default function PdfReaderApp() {
   // ---------- 문서 / 뷰 상태 ----------
   const [pdfDoc, setPdfDoc] = useState(null);
+  const [article, setArticle] = useState(null); // 링크로 연 웹 글
+  const [articlePages, setArticlePages] = useState(1);
   const [fileName, setFileName] = useState('');
   const [fileUrl, setFileUrl] = useState(null);
   const [page, setPage] = useState(1);
@@ -34,19 +61,25 @@ export default function PdfReaderApp() {
   const [info, setInfo] = useState(null); // 'help' | 'features' | 'credits' | null
   const [handEnabled, setHandEnabled] = useState(false);
   const [handStatus, setHandStatus] = useState('손 인식 대기 중');
-  const handPointerRef = useRef(null); // 포인터는 프레임마다 바뀌므로 state 대신 DOM 직접 갱신(전체 리렌더·텍스트 레이어 재그리기 방지)
 
   const fileInputRef = useRef(null);
   const stageRef = useRef(null);
-  const viewerRef = useRef(null);
   const videoRef = useRef(null);
+  const viewerRef = useRef(null);
+  const handDebugRef = useRef(null);
   const pageTextsRef = useRef([]);
 
-  const totalPages = pdfDoc?.numPages ?? 0;
+  const hasDoc = !!pdfDoc || !!article;
+  const totalPages = pdfDoc?.numPages ?? (article ? articlePages : 0);
 
   // ---------- 검색 ----------
   const search = usePdfSearch({ pdfDoc, pageTextsRef, onStatus: setStatus });
-  const selection = picked && picked.id === input.wordId ? picked : null;
+  // 드래그로 고른 글은 picked 에, 제스처로 고른 단어는 뷰어에 내용이 있다.
+  const selection = useMemo(() => {
+    if (!input.wordId) return null;
+    if (picked?.id === input.wordId) return picked;
+    return viewerRef.current?.wordInfo(input.wordId) ?? null;
+  }, [input.wordId, picked]);
   const closePopup = useCallback(() => dispatch({ type: 'CANCEL' }), []);
   const chooseTab = useCallback((choice) => dispatch({ type: 'MENU_SELECTED', choice }), []);
   useEffect(() => {
@@ -63,13 +96,97 @@ export default function PdfReaderApp() {
 
   // ---------- 시선 (modules/gaze) ----------
   // 읽는 중 클릭은 도구 막대 클릭도 많아 학습에 쓰지 않습니다.
-  const gaze = useGaze({ implicitClickTraining: false });
+  const gaze = useGaze({
+    implicitClickTraining: false,
+    dwell: { minDurationMs: DWELL_MS, maxDispersionPx: 140, releaseRadiusPx: 180, windowMs: 2000 },
+  });
   const [calibrating, setCalibrating] = useState(false);
   const gazeOn = gaze.status === 'ready' || gaze.status === 'paused';
+  const [dwellEnabled, setDwellEnabled] = useState(loadDwell);
+  const changeDwell = (on) => {
+    setDwellEnabled(on);
+    try {
+      localStorage.setItem(DWELL_KEY, on ? 'on' : 'off');
+    } catch {
+      /* 저장 실패는 무시 */
+    }
+  };
+  const phaseRef = useRef(input.phase);
+  phaseRef.current = input.phase;
+  const live = useRef({});
+  live.current = { dwellEnabled, calibrating };
+  const relockAt = useRef(0);
+  const gazeTrail = useRef([]);
+  const [edge, setEdge] = useState(null); // 시선이 머무는 화면 끝
+
+  // 제스처가 실패한 이유를 잠깐 보여 준다 (아무 반응이 없어 보이지 않도록)
+  const [flowNotice, setFlowNotice] = useState('');
+  useEffect(() => {
+    if (!flowNotice) return undefined;
+    const id = setTimeout(() => setFlowNotice(''), 4000);
+    return () => clearTimeout(id);
+  }, [flowNotice]);
+
   useEffect(() => gaze.controller.on((e) => {
+    if (e.type === 'gaze.point') {
+      const trail = gazeTrail.current;
+      trail.push({ x: e.x, y: e.y, t: e.t });
+      while (trail.length && e.t - trail[0].t > GAZE_WINDOW_MS) trail.shift();
+      setEdge(gazeEdge(averageX(trail, e.t, GAZE_WINDOW_MS), window.innerWidth));
+    } else if (e.type === 'gaze.dwell') {
+      const { dwellEnabled: on, calibrating: busy } = live.current;
+      // 화면 끝은 쪽을 넘기려고 보는 곳이라 단어를 지정하지 않는다
+      if (on && !busy && phaseRef.current === 'idle' && performance.now() >= relockAt.current && !gazeEdge(e.x, window.innerWidth)) {
+        // 읽다가 머문 것일 수 있으니 글자 근처일 때만, 실패해도 조용히 넘어간다
+        const target = viewerRef.current?.targetAt(e.x, e.y);
+        if (target) dispatch({ type: 'TARGET_LOCKED', ...target, source: 'dwell' });
+      }
+    }
     const ev = toInputEvent(e);
     if (ev) dispatch(ev);
   }), [gaze.controller]);
+
+  // 엄지를 든 순간 지정할 후보: 직전 시선의 평균 위치
+  const targetFromGaze = useCallback(() => {
+    const trail = gazeTrail.current;
+    if (!trail.length || performance.now() - trail[trail.length - 1].t > GAZE_WINDOW_MS) {
+      setFlowNotice('시선 위치를 찾지 못했습니다. 시선 보정을 켜거나 단어를 클릭해 주세요.');
+      return null;
+    }
+    const x = trail.reduce((a, p) => a + p.x, 0) / trail.length;
+    const y = trail.reduce((a, p) => a + p.y, 0) / trail.length;
+    // 엄지는 일부러 든 것이므로 멀어도 이 쪽에서 가장 가까운 단어를 잡는다
+    const target = viewerRef.current?.targetAt(x, y, Infinity) ?? null;
+    if (!target) setFlowNotice(NO_TEXT);
+    return target;
+  }, []);
+
+  // 화면 끝을 보며 손바닥을 유지하면 쪽을 넘긴다. 가운데를 보고 있으면 아무 일도 하지 않는다
+  const turnPage = useRef(() => {});
+  const onPalmHeld = useCallback(() => {
+    const x = averageX(gazeTrail.current, performance.now(), GAZE_WINDOW_MS);
+    const side = x === null ? null : gazeEdge(x, window.innerWidth);
+    if (side) turnPage.current(side === 'right' ? 1 : -1);
+  }, []);
+
+  // 읽기로 돌아오면 잠시 다시 지정하지 않는다
+  useEffect(() => {
+    if (input.phase === 'idle') relockAt.current = performance.now() + RELOCK_MS;
+  }, [input.phase]);
+  // 조정 중 아무 입력이 없으면 읽기로 돌아간다 (시선 멈춤으로 잘못 지정됐을 때 글을 계속 읽도록)
+  useEffect(() => {
+    if (input.phase !== 'adjusting') return undefined;
+    const id = setTimeout(() => dispatch({ type: 'CANCEL' }), ADJUST_TIMEOUT_MS);
+    return () => clearTimeout(id);
+  }, [input.phase, input.target]);
+
+  const lockByClick = useCallback(({ x, y }) => {
+    if (phaseRef.current !== 'idle') return;
+    const target = viewerRef.current?.targetAt(x, y);
+    if (target) dispatch({ type: 'TARGET_LOCKED', ...target, source: 'mouse' });
+    else setFlowNotice(NO_TEXT);
+  }, []);
+
   useEffect(() => {
     if (!gazeOn) dispatch({ type: 'GAZE_PARAGRAPH', paragraphId: null });
   }, [gazeOn]);
@@ -83,48 +200,36 @@ export default function PdfReaderApp() {
   };
   const stopGaze = () => {
     setCalibrating(false);
+    setEdge(null);
     gaze.stop();
   };
 
   // ---------- 손 (modules/hand) ----------
-  const phaseRef = useRef(input.phase);
-  phaseRef.current = input.phase;
   useEffect(() => {
     if (!handEnabled || !videoRef.current) return undefined;
-    const pointer = handPointerRef.current;
     const stop = startHandInput(
-      (ev) => {
-        if (ev.type === 'WORD_POINTED') {
-          const info = viewerRef.current?.wordInfo(ev.wordId);
-          if (!info) return;
-          setPicked({ id: ev.wordId, ...info });
-        }
-        dispatch(ev);
-      },
+      dispatch,
       {
         video: videoRef.current,
         getPhase: () => phaseRef.current,
-        getWordRects: () => viewerRef.current?.getWordRects() ?? [],
-        onPointer: (p) => {
-          // 포인터는 프레임마다 바뀌므로 DOM 을 직접 갱신합니다.
-          if (!pointer) return;
-          pointer.style.display = p ? 'block' : 'none';
-          if (p) {
-            pointer.style.left = `${p.x}px`;
-            pointer.style.top = `${p.y}px`;
-            pointer.style.boxShadow = `0 0 0 ${6 + Math.round(p.progress * 10)}px #f9731622`;
+        getTarget: targetFromGaze,
+        onPalmHeld,
+        // 인식 결과는 프레임마다 바뀌므로 DOM 을 직접 갱신합니다.
+        onFrame: (f) => {
+          if (handDebugRef.current) {
+            handDebugRef.current.textContent = f ? `손 모양: ${SHAPE_LABEL[f.shape]} · 엄지 ${Math.round(f.thumbDeg)}°` : '손이 보이지 않습니다';
           }
         },
-        onGuide: (g) => setHandStatus(g.msg || '손 인식 중 · 검지로 단어를 가리키세요'),
+        onGuide: (g) => setHandStatus(g.msg || HAND_READY),
         onError: (e) => {
           setHandStatus(`손 인식 시작 실패: ${e.message}`);
           setHandEnabled(false);
         },
       },
     );
-    setHandStatus('손 인식 중 · 검지로 단어를 가리키세요');
+    setHandStatus(HAND_READY);
     return stop;
-  }, [handEnabled]);
+  }, [handEnabled, targetFromGaze, onPalmHeld]);
 
   // ---------- 파일 ----------
   const loadFile = useCallback(async (file) => {
@@ -138,6 +243,7 @@ export default function PdfReaderApp() {
       const pdf = await openPdf(file);
       pageTextsRef.current = new Array(pdf.numPages);
       search.reset();
+      setArticle(null);
       setPdfDoc(pdf);
       setFileName(file.name);
       setFileUrl(URL.createObjectURL(file));
@@ -157,6 +263,18 @@ export default function PdfReaderApp() {
 
   const openUrl = useCallback(async (url) => {
     setStatus('주소에서 불러오는 중…');
+    const web = looksLikePdf(url) ? null : await fetchArticle(url);
+    if (web) {
+      search.reset();
+      setPdfDoc(null);
+      setFileUrl(null);
+      setArticle(web);
+      setFileName(web.title);
+      setPage(1);
+      setNotice('');
+      setStatus(`${web.siteName} · 단어를 클릭하거나 시선·엄지로 고르세요`);
+      return;
+    }
     const file = await fetchRemoteFile(url);
     const err = await loadFile(file);
     if (err) { setNotice(''); throw new Error(err); }
@@ -168,6 +286,7 @@ export default function PdfReaderApp() {
     search.close();
     dispatch({ type: 'CANCEL' });
     setPdfDoc(null);
+    setArticle(null);
     setFileName('');
     setFileUrl(null);
     setStatus('준비됨 · 프론트엔드 데모');
@@ -188,13 +307,19 @@ export default function PdfReaderApp() {
   }, [dark]);
 
   // 페이지/배율/회전이 바뀌면 단어 팝업 닫기
-  useEffect(() => dispatch({ type: 'CANCEL' }), [page, scale, rotation, pdfDoc]);
+  useEffect(() => dispatch({ type: 'CANCEL' }), [page, scale, rotation, pdfDoc, article]);
+
+  // 창 크기가 바뀌어 쪽 수가 줄면 범위 안으로
+  useEffect(() => {
+    if (article && page > articlePages) setPage(articlePages);
+  }, [article, page, articlePages]);
 
   // ---------- 동작 ----------
   const goToPage = useCallback(
-    (n) => { if (pdfDoc) setPage(clamp(n, 1, pdfDoc.numPages)); },
-    [pdfDoc]
+    (n) => { if (totalPages) setPage(clamp(n, 1, totalPages)); },
+    [totalPages]
   );
+  turnPage.current = (d) => goToPage(page + d);
   const zoom = (delta) => setScale((s) => clamp(s + delta, SCALE.min, SCALE.max));
   const fitWidth = async () => {
     if (!pdfDoc || !stageRef.current) return;
@@ -238,20 +363,30 @@ export default function PdfReaderApp() {
       if (e.target.matches?.('input')) return;
       const mod = e.ctrlKey || e.metaKey;
       if (e.key === '0') { closePopup(); search.setOpen(false); search.setQuery(''); }
-      if (pdfDoc && e.key === 'ArrowLeft') goToPage(page - 1);
-      if (pdfDoc && e.key === 'ArrowRight') goToPage(page + 1);
+      // 단어 조정 중에는 키보드로도 제스처와 같은 동작을 한다 (시선·손 없이 시연할 때)
+      if (input.phase === 'adjusting') {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          dispatch({ type: 'TARGET_MOVED', direction: e.key === 'ArrowRight' ? 1 : -1 });
+          return;
+        }
+        if (e.key === 'Enter') dispatch({ type: 'TARGET_CONFIRMED' });
+        if (e.key === 'Backspace') dispatch({ type: 'TARGET_BACK' });
+        if (e.key === 'Escape') closePopup();
+      }
+      if (hasDoc && e.key === 'ArrowLeft') goToPage(page - 1);
+      if (hasDoc && e.key === 'ArrowRight') goToPage(page + 1);
       if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); chooseFile(); }
       if (mod && e.key.toLowerCase() === 'f' && pdfDoc) { e.preventDefault(); search.setOpen(true); }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [page, pdfDoc, goToPage, closePopup, search.setOpen, search.setQuery]);
+  }, [page, pdfDoc, hasDoc, goToPage, closePopup, search.setOpen, search.setQuery, input.phase]);
 
   return (
     <>
       <div className="app">
         <Header
-          hasDoc={!!pdfDoc}
+          hasDoc={hasDoc}
           fileName={fileName}
           dark={dark}
           onHome={goHome}
@@ -260,12 +395,13 @@ export default function PdfReaderApp() {
           onToggleTheme={() => setDark((v) => !v)}
         />
 
-        {pdfDoc ? (
+        {hasDoc ? (
           <>
             <div className="workspace">
               <Sidebar
                 pdfDoc={pdfDoc}
                 page={page}
+                total={totalPages}
                 onPageSelect={setPage}
                 collapsed={!sidebarOpen}
                 onToggleCollapse={() => setSidebarOpen((v) => !v)}
@@ -273,13 +409,16 @@ export default function PdfReaderApp() {
                   enabled: handEnabled,
                   label: handEnabled ? handStatus : '손 인식 꺼짐',
                   videoRef,
+                  debugRef: handDebugRef,
                   onToggle: () => setHandEnabled((v) => !v),
                 }}
                 gaze={{
                   on: gazeOn,
                   status: gaze.status,
-                  label: gaze.error ? `시선 오류: ${gaze.error}` : gazeOn ? '시선 보조 켜짐 · 줄 강조' : '시선 보조 꺼짐',
+                  label: gaze.error ? `시선 오류: ${gaze.error}` : gazeOn ? '시선 보조 켜짐' : '시선 보조 꺼짐',
                   onCalibrate: startCalibration,
+                  dwellEnabled,
+                  onDwellChange: changeDwell,
                   onStop: stopGaze,
                 }}
               />
@@ -287,6 +426,7 @@ export default function PdfReaderApp() {
               <main className="viewer">
                 <Toolbar
                   hasDoc
+                  textOnly={!!article}
                   page={page}
                   totalPages={totalPages}
                   scale={scale}
@@ -302,8 +442,23 @@ export default function PdfReaderApp() {
                   onDownload={download}
                 />
                 <SearchBar search={search} />
+                {article ? (
+                  <ArticleViewer
+                    ref={viewerRef}
+                    article={article}
+                    page={page}
+                    target={input.target}
+                    gazeRegionId={input.gazeParagraphId}
+                    stageRef={stageRef}
+                    onPageCount={setArticlePages}
+                    onClickPoint={lockByClick}
+                    onSelectText={selectByMouse}
+                  />
+                ) : (
                 <PdfViewer
                   ref={viewerRef}
+                  target={input.target}
+                  onClickPoint={lockByClick}
                   stageRef={stageRef}
                   pdfDoc={pdfDoc}
                   pageNumber={page}
@@ -316,6 +471,7 @@ export default function PdfReaderApp() {
                   onRendered={(n) => setStatus(`페이지 ${n} / ${totalPages} · 텍스트를 드래그해 단어를 선택하세요`)}
                   onSelectText={selectByMouse}
                 />
+                )}
               </main>
             </div>
             <StatusBar status={status} />
@@ -325,8 +481,13 @@ export default function PdfReaderApp() {
         )}
       </div>
 
+      {hasDoc && gazeOn && !calibrating && input.phase === 'idle' && edge && <div className={`edge-glow ${edge}`} aria-hidden="true" />}
+      {(input.phase === 'adjusting' || input.phase === 'result' || flowNotice) && (
+        <div className="flow-guide" role="status">
+          {input.phase === 'result' ? GUIDE.result : input.phase === 'adjusting' ? GUIDE[input.target?.level ?? 'word'] : flowNotice}
+        </div>
+      )}
       <WordPopup selection={selection} stageRef={stageRef} onClose={closePopup} choice={input.choice} onChoice={chooseTab} />
-      <div ref={handPointerRef} className="hand-pointer" style={{ display: 'none' }} aria-hidden="true" />
       <input
         ref={fileInputRef} type="file" accept="application/pdf,.pdf" className="hidden"
         onChange={(e) => {
@@ -335,6 +496,7 @@ export default function PdfReaderApp() {
           e.target.value = '';
         }}
       />
+      {gazeOn && !calibrating && <GazeHeatLayer controller={gaze.controller} options={READING_HEATMAP} />}
       {calibrating && (
         <CalibrationOverlay
           controller={gaze.controller}

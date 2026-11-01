@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { layoutTextItem, splitWords } from './textLayout.js';
+import { layoutTextItem } from './textLayout.js';
 
 describe('layoutTextItem', () => {
   it('가로 글자: 기준선에서 ascent 만큼 올리고 폭은 배율을 반영', () => {
@@ -16,17 +16,5 @@ describe('layoutTextItem', () => {
     const l = layoutTextItem({ width: 10, height: 10 }, [10, 0, 0, 10, 0, 100], undefined, 1);
     expect(l.fontFamily).toBe('sans-serif');
     expect(l.top).toBeCloseTo(92);
-  });
-});
-
-describe('splitWords', () => {
-  it('문장부호를 빼고 위치를 돌려준다', () => {
-    expect(splitWords('“협상은 지지부진했다.”')).toEqual([
-      { word: '협상은', start: 1, end: 4 },
-      { word: '지지부진했다', start: 5, end: 11 },
-    ]);
-  });
-  it('단어가 없으면 빈 배열', () => {
-    expect(splitWords(' ... ')).toEqual([]);
   });
 });

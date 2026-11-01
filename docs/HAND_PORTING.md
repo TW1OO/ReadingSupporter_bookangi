@@ -9,9 +9,9 @@
 |---|---|
 | `fingers.ts` | 손가락 펴짐 판정 (원본 `fingers.js`의 TS 포팅. 로직 동일) |
 | `posture.ts` | 자세 안내 `PostureGuard` (원본 `posture.js`의 TS 포팅) |
-| `gestures.ts` | 손가락 개수→제스처, 다수결, `HoldStabilizer`(유지 시간), 단어 스냅 `nearestWord`, 좌표 변환 `toViewport`, `HOLD_MS` |
+| `gestures.ts` | 손가락 개수→제스처, 다수결, `HoldStabilizer`(유지 시간) |
 | `index.ts` | `startHandInput(emit, opts)`: 웹캠·MediaPipe·`InputEvent` 방출·정리 |
-| `ui/HandPanel.tsx` | 웹캠 미리보기, 자세 안내, 포인터 점, 인식 결과 출력 |
+| `ui/HandPanel.tsx` | 웹캠 미리보기, 자세 안내, 인식 결과 출력 |
 
 에셋: `@mediapipe/tasks-vision` 1.1.1(고정). wasm은 `postinstall`로 `public/mediapipe/wasm`에 복사(git 제외), 모델 `hand_landmarker.task`는 `public/mediapipe/`에 커밋.
 
@@ -21,7 +21,6 @@
 
 | 펴진 손가락 | 현재 phase | 결과 |
 |---|---|---|
-| 1 (검지) | idle | 포인터가 가까운 단어(60px 이내)로 스냅, 같은 단어 유지 시 `WORD_POINTED` (source: hand) |
 | 1 | menu | `MENU_SELECTED` meaning (뜻) |
 | 2 | menu | `MENU_SELECTED` explain (해설) |
 | 3 | menu | `MENU_SELECTED` search (검색) |

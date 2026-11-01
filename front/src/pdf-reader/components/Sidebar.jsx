@@ -1,7 +1,7 @@
 import Thumbnail from './Thumbnail.jsx';
 
-export default function Sidebar({ pdfDoc, page, onPageSelect, hand, gaze, collapsed, onToggleCollapse }) {
-  const total = pdfDoc?.numPages ?? 0;
+export default function Sidebar({ pdfDoc, page, total: pageTotal, onPageSelect, hand, gaze, collapsed, onToggleCollapse }) {
+  const total = pageTotal ?? pdfDoc?.numPages ?? 0;
   return (
     <aside className={`sidebar${collapsed ? ' collapsed' : ''}`}>
       <button
@@ -41,12 +41,17 @@ export default function Sidebar({ pdfDoc, page, onPageSelect, hand, gaze, collap
         </div>
         <div className="side-state">
           <i className="dot gray" />
-          <span>마우스: 텍스트 드래그</span>
+          <span>마우스: 단어 클릭 또는 드래그</span>
         </div>
+        <label className="side-state dwell-toggle">
+          <input type="checkbox" checked={gaze.dwellEnabled} onChange={(e) => gaze.onDwellChange(e.target.checked)} />
+          <span>시선 1초 멈춤으로 문장 지정</span>
+        </label>
+        {hand.enabled && <div className="hand-debug" ref={hand.debugRef} />}
 
         <div className="side-heading">
           <span>페이지</span>
-          <span>{pdfDoc ? `${page}/${total}` : '0/0'}</span>
+          <span>{total ? `${page}/${total}` : '0/0'}</span>
         </div>
         <div id="thumbnails">
           {pdfDoc &&

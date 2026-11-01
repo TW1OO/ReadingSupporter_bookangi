@@ -107,6 +107,11 @@ export function fingersUp(
   return { up, m, count: NAMES.filter((n) => up[n]).length };
 }
 
+// 네 손가락을 접은 자세에서 엄지가 벌어져 있는가. 기울여도 유지되도록 방향은 보지 않는다.
+export function thumbOpen(m: Measures, wasOpen = false) {
+  return m.thumb.line2 > TH.thumbLine - 0.1 && m.thumb.clear > (wasOpen ? TH.clearOff : TH.clearOn)
+}
+
 // 손이 화면 가장자리에 걸렸는지 (걸리면 MediaPipe가 손가락을 놓치기 쉬움)
 export function nearEdge(image: P[], margin = 0.03) {
   return image.some((q) => q.x < margin || q.x > 1 - margin || q.y < margin || q.y > 1 - margin);

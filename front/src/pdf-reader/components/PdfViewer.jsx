@@ -1,15 +1,16 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { pdfjsLib } from '../lib/pdf.js';
 import { cleanSelection } from '../lib/text.js';
-import { layoutTextItem, splitWords } from '../lib/textLayout.js';
+import { layoutTextItem } from '../lib/textLayout.js';
+import { buildWords, isNewBlock, nearestWordIndex, sentenceText } from '../lib/pdfWords.js';
 
 /**
  * 캔버스 + 텍스트 레이어.
- * ref로 getWordRects() / wordInfo(id)를 노출합니다 (손 포인팅 스냅용).
  * 각 텍스트 조각은 data-gaze-paragraph 를 달아 시선 모듈이 줄 수준으로 추정할 수 있게 합니다.
+ * ref로 targetAt(x, y) / wordInfo(id)를 노출합니다. 단어 조정(docs/INTERACTION.md)에 쓰입니다.
  */
 const PdfViewer = forwardRef(function PdfViewer(
-  { pdfDoc, pageNumber, scale, rotation, highlightTerm, gazeRegionId, stageRef, onOpen, onRendered, onPageText, onSelectText },
+  { pdfDoc, pageNumber, scale, rotation, highlightTerm, gazeRegionId, target, stageRef, onOpen, onRendered, onPageText, onSelectText, onClickPoint },
   ref
 ) {
   const canvasRef = useRef(null);
@@ -18,13 +19,14 @@ const PdfViewer = forwardRef(function PdfViewer(
   const renderTaskRef = useRef(null);
   const markedRef = useRef([]);
   const selTimerRef = useRef(0);
-  const wordsRef = useRef(null); // 페이지 기준 단어 위치 캐시 (손 포인터가 프레임마다 읽는다)
+  const wordsRef = useRef(null); // { words, rects } 페이지 기준 좌표. 글자가 바뀔 때만 다시 잰다
+  const candidateRef = useRef(null);
 
   const [items, setItems] = useState([]);
   const [size, setSize] = useState({ width: 0, height: 0 });
 
   const cb = useRef({});
-  cb.current = { onRendered, onPageText, onSelectText };
+  cb.current = { onRendered, onPageText, onSelectText, onClickPoint };
 
   // ---------- 페이지 렌더링 ----------
   useEffect(() => {
@@ -116,54 +118,78 @@ const PdfViewer = forwardRef(function PdfViewer(
     return () => line.forEach((el) => el.classList.remove('gaze-best'));
   }, [gazeRegionId, items]);
 
-  // ---------- 손 포인팅용 단어 위치 ----------
+  // ---------- 단어 위치 ----------
   const measureWords = () => {
-    const out = [];
+    if (wordsRef.current) return wordsRef.current;
     const wrap = wrapRef.current.getBoundingClientRect();
+    const els = Array.from(textLayerRef.current.children);
+    const boxes = els.map((el) => el.getBoundingClientRect());
+    const words = buildWords(els.map((el, i) => ({ text: el.textContent, newBlock: isNewBlock(boxes[i - 1], boxes[i]) })));
     const range = document.createRange();
-    Array.from(textLayerRef.current.children).forEach((el, spanIndex) => {
-      const node = el.firstChild;
-      if (!node) return;
-      for (const { start, end } of splitWords(node.textContent)) {
-        range.setStart(node, start);
-        range.setEnd(node, end);
-        const r = range.getBoundingClientRect();
-        if (r.width && r.height) {
-          out.push({ id: `${spanIndex}:${start}:${end}`, left: r.left - wrap.left, top: r.top - wrap.top, right: r.right - wrap.left, bottom: r.bottom - wrap.top });
-        }
-      }
+    const rects = words.map((w) => {
+      const node = els[w.span].firstChild;
+      range.setStart(node, w.start);
+      range.setEnd(node, w.end);
+      const r = range.getBoundingClientRect();
+      return { left: r.left - wrap.left, top: r.top - wrap.top, right: r.right - wrap.left, bottom: r.bottom - wrap.top };
     });
-    return out;
+    wordsRef.current = { words, rects };
+    return wordsRef.current;
   };
 
   useImperativeHandle(ref, () => ({
-    // 뷰포트 좌표의 단어 사각형들 (스크롤 위치만 더하면 되므로 측정은 한 번만 합니다)
-    getWordRects() {
-      if (!wrapRef.current || !textLayerRef.current) return [];
-      wordsRef.current ??= measureWords();
-      const { left, top } = wrapRef.current.getBoundingClientRect();
-      return wordsRef.current.map((w) => ({ id: w.id, left: w.left + left, top: w.top + top, right: w.right + left, bottom: w.bottom + top }));
+    // 화면 좌표에서 가장 가까운 단어를 후보로. 글자가 없거나 maxDist 보다 멀면 null
+    targetAt(x, y, maxDist) {
+      if (!wrapRef.current || !textLayerRef.current) return null;
+      const { words, rects } = measureWords();
+      const wrap = wrapRef.current.getBoundingClientRect();
+      const index = nearestWordIndex(rects, x - wrap.left, y - wrap.top, maxDist);
+      if (index < 0) return null;
+      return { words: words.map((w) => ({ id: w.id, sentence: w.sentence })), index };
     },
     wordInfo(id) {
-      const [spanIndex, start, end] = id.split(':').map(Number);
-      const node = textLayerRef.current?.children[spanIndex]?.firstChild;
-      if (!node) return null;
-      const range = document.createRange();
-      range.setStart(node, start);
-      range.setEnd(node, end);
-      const r = range.getBoundingClientRect();
-      return { word: node.textContent.slice(start, end), context: node.textContent, rect: { left: r.left, top: r.top, bottom: r.bottom } };
+      if (!wrapRef.current || !textLayerRef.current) return null;
+      const { words, rects } = measureWords();
+      const i = words.findIndex((w) => w.id === id);
+      if (i < 0) return null;
+      const wrap = wrapRef.current.getBoundingClientRect();
+      return {
+        id,
+        word: words[i].word,
+        context: sentenceText(words, words[i].sentence),
+        rect: { left: rects[i].left + wrap.left, top: rects[i].top + wrap.top, bottom: rects[i].bottom + wrap.top },
+      };
     },
   }), []);
+
+  // ---------- 후보 단어·문장 강조 ----------
+  const marks = (() => {
+    if (!target || !wordsRef.current) return null;
+    const cand = target.words[target.index];
+    const { words, rects } = wordsRef.current;
+    const at = words.findIndex((w) => w.id === cand?.id);
+    if (at < 0) return null;
+    return {
+      word: rects[at],
+      sentence: rects.filter((_, i) => words[i].sentence === words[at].sentence),
+      level: target.level,
+    };
+  })();
+  useEffect(() => {
+    candidateRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [target?.index, target?.level]);
 
   // ---------- 텍스트 선택 → 단어 팝업 ----------
   useEffect(() => () => clearTimeout(selTimerRef.current), []);
 
-  const handleSelection = () => {
+  const handleSelection = (point) => {
     clearTimeout(selTimerRef.current);
     selTimerRef.current = setTimeout(() => {
       const sel = window.getSelection();
-      if (!sel || sel.isCollapsed) return;
+      if (!sel || sel.isCollapsed) {
+        if (point) cb.current.onClickPoint?.(point);
+        return;
+      }
       const word = cleanSelection(sel.toString());
       if (!word || word.length > 100) return;
       const anchor = sel.anchorNode;
@@ -198,8 +224,8 @@ const PdfViewer = forwardRef(function PdfViewer(
         <div
           id="textLayer" ref={textLayerRef}
           style={{ width: size.width, height: size.height }}
-          onMouseUp={handleSelection}
-          onTouchEnd={handleSelection}
+          onMouseUp={(e) => handleSelection({ x: e.clientX, y: e.clientY })}
+          onTouchEnd={() => handleSelection()}
           onKeyUp={(e) => (e.key === 'Shift' || e.key.startsWith('Arrow')) && handleSelection()}
         >
           {items.map((it) => (
@@ -213,6 +239,20 @@ const PdfViewer = forwardRef(function PdfViewer(
             </span>
           ))}
         </div>
+        {marks && marks.sentence.map((r, i) => (
+          <div
+            key={i}
+            className={`target-sentence${marks.level === 'sentence' ? ' active' : ''}`}
+            style={{ left: r.left, top: r.top, width: r.right - r.left, height: r.bottom - r.top }}
+          />
+        ))}
+        {marks && marks.level === 'word' && (
+          <div
+            ref={candidateRef}
+            className="target-word"
+            style={{ left: marks.word.left, top: marks.word.top, width: marks.word.right - marks.word.left, height: marks.word.bottom - marks.word.top }}
+          />
+        )}
       </div>
     </section>
   );
