@@ -1,26 +1,53 @@
 import type { MenuChoice } from '@/shared/events'
-
-export type Gesture = { kind: 'menu'; choice: MenuChoice } | { kind: 'fist' } | { kind: 'none' }
+import type { FingerName } from './fingers'
 
 export const HOLD_MS = 700 // 튜닝 대상. 웹캠 테스트에서 안정적이었던 값
-export const VOTE_N = 7 // 최근 N프레임 다수결로 손가락 개수를 정한다
-export const SMOOTH = 0.35 // 포인터 이동 평활화 (0~1)
+export const VOTE_N = 7 // 최근 N프레임 다수결로 손 모양을 정한다
+export const TILT_DEG = 35 // 엄지를 이만큼 기울이면 후보를 한 칸 옮긴다
+export const REARM_DEG = 15 // 이 안으로 돌아와야 다시 옮길 수 있다
+export const WAVE_DEG = 45 // 손을 양쪽으로 각각 이만큼 기울이면 닫는다
+export const WAVE_MS = 2000 // 양쪽 기울이기가 이 시간 안에 모두 나와야 한다
+const ANGLE_SMOOTH = 0.4 // 각도 평활화 (0~1)
 
-export const FINGER_TO_CHOICE: Record<1 | 2 | 3, MenuChoice> = {
-  1: 'meaning',
-  2: 'explain',
-  3: 'search',
+export const OK_PINCH = 0.3 // 엄지 끝 ↔ 검지 끝 거리 ÷ 손바닥 길이가 이보다 작으면 맞닿은 것으로 본다
+export const PALM_CLICK_MS = 150 // 보정 중 손을 이만큼 펴고 있으면 클릭으로 본다
+export const PALM_REARM_MS = 200 // 손을 이만큼 접거나 내려야 다음 클릭을 받는다
+
+export type Shape = 'fist' | 'thumb' | 'confirm' | 'one' | 'two' | 'three' | 'palm' | 'ok' | 'none'
+
+export type Intent =
+  | { kind: 'lock' }
+  | { kind: 'move'; direction: -1 | 1 }
+  | { kind: 'back' }
+  | { kind: 'palm' } // 읽는 중 손바닥 유지 (쪽 넘기기)
+  | { kind: 'confirm' }
+  | { kind: 'menu'; choice: MenuChoice }
+  | { kind: 'close' }
+  | { kind: 'cancel' }
+
+const MENU: Partial<Record<Shape, MenuChoice>> = { one: 'meaning', two: 'explain', three: 'search' }
+
+// 손가락 펴짐 → 손 모양. thumbOpen: 네 손가락을 접었을 때 엄지가 벌어져 있는가
+// pinch: 엄지와 검지 끝이 맞닿아 있는가. OK 표시는 검지가 굽어 펴짐 판정이 흔들리므로 검지를 보지 않는다.
+export function classifyShape(up: Record<FingerName, boolean>, thumbOpen: boolean, pinch = false): Shape {
+  if (pinch && up.middle && up.ring && up.pinky) return 'ok'
+  const four = [up.index, up.middle, up.ring, up.pinky].join()
+  if (four === 'false,false,false,false') return thumbOpen ? 'thumb' : 'fist'
+  if (four === 'true,false,false,false') return up.thumb ? 'confirm' : 'one'
+  if (four === 'true,true,false,false') return up.thumb ? 'none' : 'two'
+  if (four === 'true,true,true,false') return up.thumb ? 'none' : 'three'
+  if (four === 'true,true,true,true') return 'palm'
+  return 'none'
 }
 
-// 손가락 개수 → 제스처. 4·5개는 메뉴에 없으므로 none.
-export function toGesture(count: number): Gesture {
-  if (count === 0) return { kind: 'fist' }
-  if (count === 1 || count === 2 || count === 3) return { kind: 'menu', choice: FINGER_TO_CHOICE[count] }
-  return { kind: 'none' }
+// 세운 자세를 0도로 한 기울기. 양수면 사용자 기준 오른쪽(거울 화면의 오른쪽)이다.
+// image 좌표는 좌우 반전 전이라 사용자의 오른쪽이 x가 작은 쪽이다.
+export function tiltDeg(from: { x: number; y: number }, to: { x: number; y: number }, aspect: number): number {
+  return (Math.atan2(-(to.x - from.x) * aspect, -(to.y - from.y)) * 180) / Math.PI
 }
 
-export function majority(arr: number[]): number {
-  const c = new Map<number, number>()
+export function majority<T>(arr: T[]): T {
+  const c = new Map<T, number>()
   let best = arr[0]
   for (const v of arr) {
     c.set(v, (c.get(v) ?? 0) + 1)
@@ -29,9 +56,9 @@ export function majority(arr: number[]): number {
   return best
 }
 
-// 같은 개수를 holdMs 동안 유지하면 한 번만 확정한다. 다른 개수로 바뀌어야 다시 확정 가능.
-export class HoldStabilizer {
-  private cur: number | null = null
+// 같은 값을 holdMs 동안 유지하면 한 번만 확정한다. 다른 값으로 바뀌어야 다시 확정 가능.
+export class HoldStabilizer<T = number> {
+  private cur: T | null = null
   private since = 0
   private fired = false
 
@@ -42,51 +69,116 @@ export class HoldStabilizer {
     this.fired = false
   }
 
-  // 확정된 개수를 돌려주고, 아니면 null. blocked 면 진행을 멈추고 처음부터 다시 센다.
-  update(count: number, now: number, blocked = false): number | null {
+  // 확정된 값을 돌려주고, 아니면 null. blocked 면 진행을 멈추고 처음부터 다시 센다.
+  update(value: T, now: number, blocked = false): T | null {
     if (blocked) {
       this.reset()
       return null
     }
-    if (count !== this.cur) {
-      this.cur = count
+    if (value !== this.cur) {
+      this.cur = value
       this.since = now
       this.fired = false
       return null
     }
     if (this.fired || now - this.since < this.holdMs) return null
     this.fired = true
-    return count
+    return value
   }
 }
 
-export interface WordRect {
-  id: string
-  left: number
-  top: number
-  right: number
-  bottom: number
-}
+export type Phase = 'idle' | 'adjusting' | 'menu' | 'result'
 
-// 포인터에서 가장 가까운 단어. maxDist(px) 밖이면 null. 사각형 안이면 거리 0.
-export function nearestWord(rects: WordRect[], x: number, y: number, maxDist = 60): string | null {
-  let best: string | null = null
-  let bestD = maxDist
-  for (const r of rects) {
-    const dx = Math.max(r.left - x, 0, x - r.right)
-    const dy = Math.max(r.top - y, 0, y - r.bottom)
-    const d = Math.hypot(dx, dy)
-    if (d <= bestD) {
-      bestD = d
-      best = r.id
+export type CalibrationGesture = 'ok' | 'palm'
+
+// 시선 보정 중의 제스처. OK 표시를 유지하면 'ok', 손을 펼 때마다 'palm' 한 번.
+export class CalibrationGestureTracker {
+  private stab = new HoldStabilizer<Shape>()
+  private palmSince: number | null = null
+  private otherSince: number | null = null
+  private armed = false // 처음부터 펴고 있던 손은 클릭으로 세지 않는다
+
+  update(shape: Shape, now: number): CalibrationGesture | null {
+    const held = this.stab.update(shape, now)
+    if (shape === 'palm') {
+      this.otherSince = null
+      if (!this.armed) return null
+      this.palmSince ??= now
+      if (now - this.palmSince < PALM_CLICK_MS) return null
+      this.armed = false
+      this.palmSince = null
+      return 'palm'
     }
+    this.palmSince = null
+    this.otherSince ??= now
+    if (now - this.otherSince >= PALM_REARM_MS) this.armed = true
+    return held === 'ok' ? 'ok' : null
   }
-  return best
 }
 
-// 정규화 랜드마크(0~1, 영상 기준) → 뷰포트 px. 거울 반전하고, 가장자리 margin 은 잘라
-// 손이 화면 끝까지 안 가도 전체 화면에 닿게 한다.
-export function toViewport(nx: number, ny: number, w: number, h: number, margin = 0.1) {
-  const clamp = (v: number) => Math.min(1, Math.max(0, (v - margin) / (1 - 2 * margin)))
-  return { x: clamp(1 - nx) * w, y: clamp(ny) * h }
+// 프레임별 손 모양·각도 → 할 일. 웹캠 없이 테스트한다.
+export class GestureTracker {
+  private stab = new HoldStabilizer<Shape>()
+  private prevShape: Shape | null = null
+  private thumb = 0
+  private palm = 0
+  private armed = false
+  private rightAt = -Infinity
+  private leftAt = -Infinity
+  private closedByWave = false // 흔들어 닫은 손을 그대로 펴고 있으면 쪽을 넘기지 않는다
+
+  reset() {
+    this.stab.reset()
+    this.prevShape = null
+    this.armed = false
+    this.closedByWave = false
+    this.rightAt = this.leftAt = -Infinity
+  }
+
+  update(
+    f: { shape: Shape; thumbDeg: number; palmDeg: number },
+    phase: Phase,
+    now: number,
+    blocked = false,
+  ): Intent | null {
+    const entered = f.shape !== this.prevShape
+    this.prevShape = f.shape
+    this.thumb = entered ? f.thumbDeg : this.thumb + (f.thumbDeg - this.thumb) * ANGLE_SMOOTH
+    this.palm = entered ? f.palmDeg : this.palm + (f.palmDeg - this.palm) * ANGLE_SMOOTH
+    const held = this.stab.update(f.shape, now, blocked)
+
+    if (phase === 'adjusting' && f.shape === 'thumb' && !blocked) {
+      if (Math.abs(this.thumb) < REARM_DEG) this.armed = true
+      else if (this.armed && Math.abs(this.thumb) >= TILT_DEG) {
+        this.armed = false
+        return { kind: 'move', direction: this.thumb > 0 ? 1 : -1 }
+      }
+    } else if (f.shape !== 'thumb') {
+      this.armed = false
+    }
+
+    if (phase === 'result' && f.shape === 'palm') {
+      if (this.palm >= WAVE_DEG) this.rightAt = now
+      if (this.palm <= -WAVE_DEG) this.leftAt = now
+      if (now - this.rightAt <= WAVE_MS && now - this.leftAt <= WAVE_MS) {
+        this.rightAt = this.leftAt = -Infinity
+        this.closedByWave = true
+        return { kind: 'close' }
+      }
+    } else if (f.shape !== 'palm') {
+      this.rightAt = this.leftAt = -Infinity
+      this.closedByWave = false
+    }
+
+    if (held === null) return null
+    if (held === 'fist') return phase === 'idle' ? null : { kind: 'cancel' }
+    if (held === 'thumb') return phase === 'idle' ? { kind: 'lock' } : null
+    if (held === 'confirm') return phase === 'adjusting' ? { kind: 'confirm' } : null
+    if (held === 'palm') {
+      if (phase === 'adjusting') return { kind: 'back' }
+      return phase === 'idle' && !this.closedByWave ? { kind: 'palm' } : null
+    }
+    const choice = MENU[held]
+    return choice && (phase === 'menu' || phase === 'result') ? { kind: 'menu', choice } : null
+  }
 }

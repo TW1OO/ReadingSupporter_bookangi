@@ -1,4 +1,5 @@
 import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
+import { WIDE_VIDEO } from '@/shared/camera';
 import {
   BLINK_OPEN,
   FEATURE_DIM,
@@ -93,7 +94,7 @@ export class MediaPipeBackend {
 
     this.stream = await navigator.mediaDevices.getUserMedia({
       // 잘라 쓰므로 원본 해상도가 높을수록 얼굴(홍채) 픽셀이 늘어난다.
-      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+      video: WIDE_VIDEO,
     });
     const video = document.createElement('video');
     video.playsInline = true;
@@ -176,6 +177,10 @@ export class MediaPipeBackend {
   }
 
   /** 최근 400ms 자세 평균. 그보다 오래 얼굴이 안 잡혔으면 null. */
+  getStream(): MediaStream | null {
+    return this.stream ?? null;
+  }
+
   getPose(): Pose | null {
     const now = performance.now();
     return averagePoses(this.poses.filter((r) => now - r.t <= 400).map((r) => r.p));
@@ -231,14 +236,14 @@ export class MediaPipeBackend {
     } as Partial<CSSStyleDeclaration>);
     box.appendChild(video);
 
-    const [lo, hi] = FRAMING.ABS.xy;
+    const { x: rangeX, y: rangeY } = FRAMING.ABS;
     const guide = document.createElement('div');
     Object.assign(guide.style, {
       position: 'absolute',
-      left: `${lo * 100}%`,
-      top: `${lo * 100}%`,
-      width: `${(hi - lo) * 100}%`,
-      height: `${(hi - lo) * 100}%`,
+      left: `${rangeX[0] * 100}%`,
+      top: `${rangeY[0] * 100}%`,
+      width: `${(rangeX[1] - rangeX[0]) * 100}%`,
+      height: `${(rangeY[1] - rangeY[0]) * 100}%`,
       border: '2px dashed #e0a458',
       borderRadius: '6px',
       boxSizing: 'border-box',

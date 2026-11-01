@@ -1,30 +1,32 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { pdfjsLib } from '../lib/pdf.js';
 import { cleanSelection } from '../lib/text.js';
+import { layoutTextItem } from '../lib/textLayout.js';
+import { buildWords, isNewBlock, nearestWordIndex, sentenceText } from '../lib/pdfWords.js';
 
 /**
- * 캔버스 + 텍스트 레이어 + 시선 오버레이.
- * ref로 updateGaze({x, y, confidence}) / updateGaze(null)을 노출합니다.
- * (시선 좌표는 프레임마다 들어오므로 React state 대신 DOM을 직접 갱신해 리렌더를 피합니다.)
+ * 캔버스 + 텍스트 레이어.
+ * 각 텍스트 조각은 data-gaze-paragraph 를 달아 시선 모듈이 줄 수준으로 추정할 수 있게 합니다.
+ * ref로 targetAt(x, y) / wordInfo(id)를 노출합니다. 단어 조정(docs/INTERACTION.md)에 쓰입니다.
  */
 const PdfViewer = forwardRef(function PdfViewer(
-  { pdfDoc, pageNumber, scale, rotation, highlightTerm, stageRef, onOpen, onRendered, onPageText, onSelectText },
+  { pdfDoc, pageNumber, scale, rotation, highlightTerm, gazeRegionId, target, stageRef, onOpen, onRendered, onPageText, onSelectText, onClickPoint },
   ref
 ) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
   const textLayerRef = useRef(null);
-  const washRef = useRef(null);
-  const pointerRef = useRef(null);
   const renderTaskRef = useRef(null);
   const markedRef = useRef([]);
   const selTimerRef = useRef(0);
+  const wordsRef = useRef(null); // { words, rects } 페이지 기준 좌표. 글자가 바뀔 때만 다시 잰다
+  const candidateRef = useRef(null);
 
   const [items, setItems] = useState([]);
   const [size, setSize] = useState({ width: 0, height: 0 });
 
   const cb = useRef({});
-  cb.current = { onRendered, onPageText, onSelectText };
+  cb.current = { onRendered, onPageText, onSelectText, onClickPoint };
 
   // ---------- 페이지 렌더링 ----------
   useEffect(() => {
@@ -68,14 +70,7 @@ const PdfViewer = forwardRef(function PdfViewer(
         content.items.forEach((item, i) => {
           if (!item.str) return;
           const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
-          next.push({
-            key: i,
-            str: item.str,
-            left: tx[4],
-            top: tx[5] - Math.abs(tx[3]),
-            fontSize: Math.max(1, Math.hypot(tx[2], tx[3])),
-            fontFamily: item.fontName || 'sans-serif',
-          });
+          next.push({ key: i, str: item.str, ...layoutTextItem(item, tx, content.styles[item.fontName], viewport.scale) });
         });
         setItems(next);
         cb.current.onPageText?.(pageNumber, content.items.map((it) => it.str).join(' '));
@@ -91,73 +86,110 @@ const PdfViewer = forwardRef(function PdfViewer(
     };
   }, [pdfDoc, pageNumber, scale, rotation]);
 
-  // ---------- 시선 오버레이 ----------
-  const clearMarks = () => {
-    markedRef.current.forEach((el) => el.classList.remove('gaze-candidate', 'gaze-best'));
-    markedRef.current = [];
+  // ---------- 텍스트 레이어 정렬 ----------
+  // 대체 글꼴은 PDF 글꼴과 폭이 달라서, 조각마다 실제 글자 폭에 맞게 늘이거나 줄입니다.
+  useLayoutEffect(() => {
+    wordsRef.current = null;
+    const spans = Array.from(textLayerRef.current?.children ?? []);
+    spans.forEach((el) => { el.style.transform = ''; });
+    const natural = spans.map((el) => el.offsetWidth);
+    spans.forEach((el, i) => {
+      const it = items[i];
+      if (!it) return;
+      const rotate = it.angle ? `rotate(${it.angle}rad) ` : '';
+      const fit = natural[i] > 0 && it.width > 0 ? `scaleX(${it.width / natural[i]})` : '';
+      el.style.transform = rotate + fit;
+    });
+  }, [items]);
+
+  // ---------- 시선 강조: 시선이 머무는 줄 ----------
+  useEffect(() => {
+    const layer = textLayerRef.current;
+    if (!layer || !gazeRegionId) return undefined;
+    const hit = Array.from(layer.children).find((el) => el.dataset.gazeParagraph === gazeRegionId);
+    if (!hit) return undefined;
+    const r = hit.getBoundingClientRect();
+    const cy = (r.top + r.bottom) / 2;
+    const line = Array.from(layer.children).filter((el) => {
+      const o = el.getBoundingClientRect();
+      return cy >= o.top && cy <= o.bottom;
+    });
+    line.forEach((el) => el.classList.add('gaze-best'));
+    return () => line.forEach((el) => el.classList.remove('gaze-best'));
+  }, [gazeRegionId, items]);
+
+  // ---------- 단어 위치 ----------
+  const measureWords = () => {
+    if (wordsRef.current) return wordsRef.current;
+    const wrap = wrapRef.current.getBoundingClientRect();
+    const els = Array.from(textLayerRef.current.children);
+    const boxes = els.map((el) => el.getBoundingClientRect());
+    const words = buildWords(els.map((el, i) => ({ text: el.textContent, newBlock: isNewBlock(boxes[i - 1], boxes[i]) })));
+    const range = document.createRange();
+    const rects = words.map((w) => {
+      const node = els[w.span].firstChild;
+      range.setStart(node, w.start);
+      range.setEnd(node, w.end);
+      const r = range.getBoundingClientRect();
+      return { left: r.left - wrap.left, top: r.top - wrap.top, right: r.right - wrap.left, bottom: r.bottom - wrap.top };
+    });
+    wordsRef.current = { words, rects };
+    return wordsRef.current;
   };
 
   useImperativeHandle(ref, () => ({
-    updateGaze(point) {
-      const wrap = wrapRef.current;
-      const pointer = pointerRef.current;
-      const wash = washRef.current;
-      if (!wrap || !pointer || !wash) return;
-
-      if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y) || !wrap.offsetWidth) {
-        pointer.style.display = wash.style.display = 'none';
-        clearMarks();
-        return;
-      }
-
-      const { x, y, confidence = 1 } = point;
-      const px = Math.max(0, Math.min(wrap.clientWidth, x * wrap.clientWidth));
-      const py = Math.max(0, Math.min(wrap.clientHeight, y * wrap.clientHeight));
-
-      pointer.style.display = wash.style.display = 'block';
-      pointer.style.left = `${px}px`;
-      pointer.style.top = `${py}px`;
-      wash.style.left = `${Math.max(0, px - 46)}px`;
-      wash.style.top = `${Math.max(0, py - 12)}px`;
-      wash.style.width = '92px';
-      wash.style.height = '24px';
-
-      const w = wrap.getBoundingClientRect();
-      const centers = [];
-      let nearest = null;
-      let best = Infinity;
-      for (const el of textLayerRef.current.children) {
-        const r = el.getBoundingClientRect();
-        const cx = r.left - w.left + r.width / 2;
-        const cy = r.top - w.top + r.height / 2;
-        centers.push([el, cx, cy]);
-        const d = Math.hypot(cx - px, cy - py);
-        if (d < best) { best = d; nearest = [el, cx, cy]; }
-      }
-
-      clearMarks();
-      if (nearest && best < 110 && confidence >= 0.25) {
-        const [bestEl, nx, ny] = nearest;
-        bestEl.classList.add('gaze-best');
-        markedRef.current.push(bestEl);
-        for (const [el, cx, cy] of centers) {
-          if (el !== bestEl && Math.hypot(cx - nx, cy - ny) < 95) {
-            el.classList.add('gaze-candidate');
-            markedRef.current.push(el);
-          }
-        }
-      }
+    // 화면 좌표에서 가장 가까운 단어를 후보로. 글자가 없거나 maxDist 보다 멀면 null
+    targetAt(x, y, maxDist) {
+      if (!wrapRef.current || !textLayerRef.current) return null;
+      const { words, rects } = measureWords();
+      const wrap = wrapRef.current.getBoundingClientRect();
+      const index = nearestWordIndex(rects, x - wrap.left, y - wrap.top, maxDist);
+      if (index < 0) return null;
+      return { words: words.map((w) => ({ id: w.id, sentence: w.sentence })), index };
+    },
+    wordInfo(id) {
+      if (!wrapRef.current || !textLayerRef.current) return null;
+      const { words, rects } = measureWords();
+      const i = words.findIndex((w) => w.id === id);
+      if (i < 0) return null;
+      const wrap = wrapRef.current.getBoundingClientRect();
+      return {
+        id,
+        word: words[i].word,
+        context: sentenceText(words, words[i].sentence),
+        rect: { left: rects[i].left + wrap.left, right: rects[i].right + wrap.left, top: rects[i].top + wrap.top, bottom: rects[i].bottom + wrap.top },
+      };
     },
   }), []);
+
+  // ---------- 후보 단어·문장 강조 ----------
+  const marks = (() => {
+    if (!target || !wordsRef.current) return null;
+    const cand = target.words[target.index];
+    const { words, rects } = wordsRef.current;
+    const at = words.findIndex((w) => w.id === cand?.id);
+    if (at < 0) return null;
+    return {
+      word: rects[at],
+      sentence: rects.filter((_, i) => words[i].sentence === words[at].sentence),
+      level: target.level,
+    };
+  })();
+  useEffect(() => {
+    candidateRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [target?.index, target?.level]);
 
   // ---------- 텍스트 선택 → 단어 팝업 ----------
   useEffect(() => () => clearTimeout(selTimerRef.current), []);
 
-  const handleSelection = () => {
+  const handleSelection = (point) => {
     clearTimeout(selTimerRef.current);
     selTimerRef.current = setTimeout(() => {
       const sel = window.getSelection();
-      if (!sel || sel.isCollapsed) return;
+      if (!sel || sel.isCollapsed) {
+        if (point) cb.current.onClickPoint?.(point);
+        return;
+      }
       const word = cleanSelection(sel.toString());
       if (!word || word.length > 100) return;
       const anchor = sel.anchorNode;
@@ -165,7 +197,7 @@ const PdfViewer = forwardRef(function PdfViewer(
       if (!el || !textLayerRef.current?.contains(el)) return;
       const rect = sel.getRangeAt(0).getBoundingClientRect();
       if (!rect.width && !rect.height) return;
-      cb.current.onSelectText?.({ word, rect: { left: rect.left, top: rect.top, bottom: rect.bottom } });
+      cb.current.onSelectText?.({ word, context: el.textContent, rect: { left: rect.left, top: rect.top, bottom: rect.bottom } });
     }, 180);
   };
 
@@ -192,22 +224,35 @@ const PdfViewer = forwardRef(function PdfViewer(
         <div
           id="textLayer" ref={textLayerRef}
           style={{ width: size.width, height: size.height }}
-          onMouseUp={handleSelection}
-          onTouchEnd={handleSelection}
+          onMouseUp={(e) => handleSelection({ x: e.clientX, y: e.clientY })}
+          onTouchEnd={() => handleSelection()}
           onKeyUp={(e) => (e.key === 'Shift' || e.key.startsWith('Arrow')) && handleSelection()}
         >
           {items.map((it) => (
             <span
               key={it.key}
               data-hit={highlightTerm && it.str.toLocaleLowerCase().includes(highlightTerm) ? '' : undefined}
+              data-gaze-paragraph={`p${pageNumber}-${it.key}`}
               style={{ left: it.left, top: it.top, fontSize: it.fontSize, fontFamily: it.fontFamily }}
             >
               {it.str}
             </span>
           ))}
         </div>
-        <div className="gaze-wash" ref={washRef} />
-        <div className="gaze-pointer" ref={pointerRef} />
+        {marks && marks.sentence.map((r, i) => (
+          <div
+            key={i}
+            className={`target-sentence${marks.level === 'sentence' ? ' active' : ''}`}
+            style={{ left: r.left, top: r.top, width: r.right - r.left, height: r.bottom - r.top }}
+          />
+        ))}
+        {marks && marks.level === 'word' && (
+          <div
+            ref={candidateRef}
+            className="target-word"
+            style={{ left: marks.word.left, top: marks.word.top, width: marks.word.right - marks.word.left, height: marks.word.bottom - marks.word.top }}
+          />
+        )}
       </div>
     </section>
   );

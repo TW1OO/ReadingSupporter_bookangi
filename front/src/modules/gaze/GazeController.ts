@@ -5,6 +5,7 @@ import type { ValidationSample } from './calibration';
 import type { TrainSample } from './linearGaze';
 import { MediaPipeBackend, type RawGaze } from './mediapipeBackend';
 import { checkDrift, postureDrift, type Pose, type PostureDrift } from './framing';
+import { measureWordError, nudgeOffset, type GazeSample } from './wordCorrection';
 import {
   DEFAULT_OPTIONS,
   type GazeInputEvent,
@@ -50,6 +51,8 @@ export class GazeController {
   private calibrating = false;
   /** 검증 중 모은 학습 샘플. 검증 오차를 정직하게 재려고 측정이 끝날 때까지 모델에 넣지 않는다. */
   private validationSamples: TrainSample[] = [];
+  /** 쏠림 보정(마무리 방식 'bias'): 평활 좌표에 더하는 오프셋. 저장하지 않는다(다음 사람에게 남지 않게). */
+  private offset = { dx: 0, dy: 0 };
 
   constructor(options: Partial<GazeOptions> = {}) {
     this.opts = {
@@ -145,6 +148,7 @@ export class GazeController {
     this.filter.reset();
     this.dwell.reset();
     this.region = null;
+    this.offset = { dx: 0, dy: 0 };
     this.setStatus('idle');
   }
 
@@ -152,6 +156,11 @@ export class GazeController {
 
   getPose(): Pose | null {
     return this.backend.getPose();
+  }
+
+  /** 안내 화면에서 카메라 영상을 보여 줄 때 쓴다 */
+  getStream(): MediaStream | null {
+    return this.backend.getStream();
   }
 
   /** 미리보기의 시작 가능 구역 색 (자세가 좋으면 초록) */
@@ -221,7 +230,11 @@ export class GazeController {
   measureTarget(
     x: number,
     y: number,
-    { settleMs = 700, collectMs = 1200 }: { settleMs?: number; collectMs?: number } = {},
+    {
+      settleMs = 700,
+      collectMs = 1200,
+      capture = true,
+    }: { settleMs?: number; collectMs?: number; capture?: boolean } = {},
   ): Promise<ValidationSample[]> {
     return new Promise((resolve) => {
       const samples: ValidationSample[] = [];
@@ -234,7 +247,7 @@ export class GazeController {
         if (s && now >= startAt && now - s.t < 150) {
           samples.push({ targetX: x, targetY: y, gazeX: s.x, gazeY: s.y });
         }
-        if (now >= startAt && now - lastCaptureAt >= VALIDATION_CAPTURE_MS) {
+        if (capture && now >= startAt && now - lastCaptureAt >= VALIDATION_CAPTURE_MS) {
           const t = this.backend.capturePoint(x, y);
           if (t) {
             this.validationSamples.push(t);
@@ -258,8 +271,27 @@ export class GazeController {
     this.validationSamples = [];
   }
 
+  /** 검증 중 모은 학습 샘플을 쓰지 않고 버린다 (마무리 방식이 쏠림 보정일 때) */
+  discardValidationTraining() {
+    this.validationSamples = [];
+  }
+
+  /** 검증에서 잰 쏠림(gaze - target)을 이후 좌표에서 뺀다 */
+  applyBias(bias: { dx: number; dy: number }) {
+    this.offset = { dx: -bias.dx, dy: -bias.dy };
+  }
+
+  /** 확정한 단어를 보고 있었다고 보고 좌표를 조금 옮긴다. 믿을 수 없는 측정이면 false */
+  correctFromWord(trail: ReadonlyArray<GazeSample>, word: { x: number; y: number }): boolean {
+    const error = measureWordError(trail, word, performance.now());
+    if (!error) return false;
+    this.offset = nudgeOffset(this.offset, error);
+    return true;
+  }
+
   async resetTraining() {
     this.validationSamples = [];
+    this.offset = { dx: 0, dy: 0 };
     await this.backend.clearData();
     this.filter.reset();
     this.dwell.reset();
@@ -291,10 +323,10 @@ export class GazeController {
     const rawY = Math.min(h, Math.max(0, data.y));
 
     const sm = this.filter.filter(rawX, rawY, now);
-    this.lastSmoothed = { x: sm.x, y: sm.y, t: now };
-
-    const x = Math.min(w, Math.max(0, sm.x));
-    const y = Math.min(h, Math.max(0, sm.y));
+    const x = Math.min(w, Math.max(0, sm.x + this.offset.dx));
+    const y = Math.min(h, Math.max(0, sm.y + this.offset.dy));
+    // 검증은 사용자가 실제로 보게 될 최종 좌표로 잰다 (마무리 후 재검증에 쏠림 보정이 반영되도록)
+    this.lastSmoothed = { x, y, t: now };
 
     const dwellEvent = this.dwell.push({ x, y, t: now });
 

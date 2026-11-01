@@ -1,34 +1,21 @@
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision'
-import type { InputEvent } from '@/shared/events'
-import { fingersUp, type FingerName } from './fingers'
+import { WIDE_VIDEO } from '@/shared/camera'
+import type { InputEvent, TargetWord } from '@/shared/events'
+import { fingersUp, thumbOpen, type FingerName } from './fingers'
 import { PostureGuard, type GuideLevel } from './posture'
-import {
-  HOLD_MS,
-  HoldStabilizer,
-  SMOOTH,
-  VOTE_N,
-  majority,
-  nearestWord,
-  toGesture,
-  toViewport,
-  type WordRect,
-} from './gestures'
+import { CalibrationGestureTracker, GestureTracker, OK_PINCH, VOTE_N, classifyShape, majority, tiltDeg, type CalibrationGesture, type Intent, type Phase, type Shape } from './gestures'
 
 export interface HandGuide {
   level: GuideLevel
   msg: string
 }
 
-export interface HandPointer {
-  x: number
-  y: number
-  wordId: string | null
-  progress: number // 0~1, 같은 단어를 가리키며 유지한 정도
-}
-
 // 프레임마다 전달하는 인식 결과 (화면 출력/디버그용)
 export interface HandFrame {
-  count: number // 다수결로 정한 펴진 손가락 개수
+  count: number // 펴진 손가락 개수
+  shape: Shape // 다수결로 정한 손 모양
+  thumbDeg: number // 엄지 기울기. 양수면 오른쪽
+  center: { x: number; y: number } // 손바닥 중심 (거울 화면 기준, 0~1)
   up: Record<FingerName, boolean>
   blocked: boolean
   score: number // MediaPipe 손 인식 확신도
@@ -36,11 +23,14 @@ export interface HandFrame {
 
 export interface HandOptions {
   video: HTMLVideoElement
-  // 현재 phase. 포인팅은 idle 일 때만, 메뉴 선택은 menu 일 때만, 취소는 idle 이 아닐 때만 방출한다.
-  getPhase: () => 'idle' | 'menu' | 'result'
-  // 포인터가 스냅할 단어 사각형들 (뷰포트 좌표)
-  getWordRects: () => WordRect[]
-  onPointer?: (p: HandPointer | null) => void
+  getPhase: () => Phase
+  // 엄지를 들었을 때 지정할 단어 목록과 후보 위치. 없으면 null (손 모듈은 시선을 모른다)
+  getTarget?: () => { words: TargetWord[]; index: number } | null
+  // 읽는 중 손바닥을 유지했을 때. 쪽 넘기기 여부는 앱이 시선을 보고 정한다
+  onPalmHeld?: () => void
+  // 시선 보정 중인가. 이때는 읽기 제스처를 내지 않고 보정 제스처만 알린다
+  isCalibrating?: () => boolean
+  onCalibrationGesture?: (g: CalibrationGesture) => void
   onGuide?: (g: HandGuide) => void
   onFrame?: (f: HandFrame | null) => void // 손이 안 보이면 null
   onError?: (e: Error) => void
@@ -50,10 +40,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, '')
 const WASM_DIR = `${BASE}/mediapipe/wasm`
 const MODEL_PATH = `${BASE}/mediapipe/hand_landmarker.task`
 
-// 2단계: 웹캠 → MediaPipe(브라우저) → InputEvent. gaze 모듈을 import 하지 않는다.
-//  - 검지만 펴고 같은 단어 위에서 유지 → WORD_POINTED (idle 에서만)
-//  - 메뉴 상태에서 1/2/3 유지 → MENU_SELECTED
-//  - 주먹 유지 → CANCEL (idle 이 아닐 때)
+// 웹캠 → MediaPipe(브라우저) → InputEvent. gaze 모듈을 import 하지 않는다. 동작은 docs/INTERACTION.md.
 // 반환값을 호출하면 카메라와 모델을 정리한다.
 export function startHandInput(emit: (ev: InputEvent) => void, opts: HandOptions): () => void {
   let stopped = false
@@ -81,7 +68,7 @@ export function startHandInput(emit: (ev: InputEvent) => void, opts: HandOptions
     hands = landmarker
     if (stopped) return
 
-    const s = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
+    const s = await navigator.mediaDevices.getUserMedia({ video: WIDE_VIDEO })
     stream = s
     if (stopped) return
     const { video } = opts
@@ -89,33 +76,38 @@ export function startHandInput(emit: (ev: InputEvent) => void, opts: HandOptions
     await video.play()
 
     let prevUp: Partial<Record<FingerName, boolean>> = {}
-    const votes: number[] = []
+    const votes: Shape[] = []
+    let wasThumbOpen = false
     const guard = new PostureGuard()
-    const stab = new HoldStabilizer()
+    const tracker = new GestureTracker()
+    const calibration = new CalibrationGestureTracker()
     let lastGuideKey: string | null = null
-    let px: number | null = null
-    let py: number | null = null
     let lastT = -1
-
-    // 포인팅 확정용: 같은 단어를 가리킨 시간
-    let pointWord: string | null = null
-    let pointSince = 0
-    let pointFired = false
 
     const clearHand = () => {
       prevUp = {}
       votes.length = 0
-      px = py = null
-      pointWord = null
-      pointFired = false
-      stab.reset()
+      wasThumbOpen = false
+      tracker.reset()
       guard.reset()
       if (lastGuideKey !== null) {
         lastGuideKey = null
         opts.onGuide?.({ level: 'ok', msg: '' })
       }
-      opts.onPointer?.(null)
       opts.onFrame?.(null)
+    }
+
+    const act = (i: Intent) => {
+      if (i.kind === 'lock') {
+        const t = opts.getTarget?.()
+        if (t) emit({ type: 'TARGET_LOCKED', ...t, source: 'thumb' })
+      } else if (i.kind === 'palm') opts.onPalmHeld?.()
+      else if (i.kind === 'move') emit({ type: 'TARGET_MOVED', direction: i.direction })
+      else if (i.kind === 'back') emit({ type: 'TARGET_BACK' })
+      else if (i.kind === 'confirm') emit({ type: 'TARGET_CONFIRMED' })
+      else if (i.kind === 'menu') emit({ type: 'MENU_SELECTED', choice: i.choice })
+      else if (i.kind === 'close') emit({ type: 'CLOSE' })
+      else emit({ type: 'CANCEL' })
     }
 
     const loop = () => {
@@ -124,62 +116,48 @@ export function startHandInput(emit: (ev: InputEvent) => void, opts: HandOptions
       if (video.currentTime !== lastT) {
         lastT = video.currentTime
         const res = landmarker.detectForVideo(video, now)
+        const calibrating = opts.isCalibrating?.() ?? false
+        const calibrationInput = (shape: Shape) => {
+          const g = calibration.update(shape, now)
+          if (g) opts.onCalibrationGesture?.(g)
+        }
         if (!res.landmarks.length) {
           clearHand()
+          if (calibrating) calibrationInput('none')
         } else {
           const lm = res.landmarks[0]
           const aspect = video.videoWidth / video.videoHeight
           const f = fingersUp(res.worldLandmarks[0], lm, prevUp, aspect)
           prevUp = f.up
-          votes.push(f.count)
+          wasThumbOpen = thumbOpen(f.m, wasThumbOpen)
+          votes.push(classifyShape(f.up, wasThumbOpen, f.m.thumb.pinch < OK_PINCH))
           if (votes.length > VOTE_N) votes.shift()
-          const count = majority(votes)
+          const shape = majority(votes)
+          const thumbDeg = tiltDeg(lm[2], lm[4], aspect)
 
           // 자세 점검: 인식을 믿기 어려운 상태면 확정을 막고 안내
           const hd = res.handedness?.[0]?.[0]
           const g = guard.update(lm, f, hd ? hd.score : 1, aspect, now)
-          if (g.key !== lastGuideKey) {
-            lastGuideKey = g.key
-            opts.onGuide?.({ level: g.level, msg: g.msg })
+          // 엄지 자세는 손을 옆으로 세우는 게 정상이라 '손바닥을 보여 달라'는 안내를 하지 않는다
+          const guideKey = g.level === 'hint' && (shape === 'thumb' || shape === 'confirm') ? null : g.key
+          if (guideKey !== lastGuideKey) {
+            lastGuideKey = guideKey
+            opts.onGuide?.(guideKey === g.key ? { level: g.level, msg: g.msg } : { level: 'ok', msg: '' })
           }
 
-          opts.onFrame?.({ count, up: f.up, blocked: g.blocked, score: g.score })
+          opts.onFrame?.({ count: f.count, shape, thumbDeg, center: { x: 1 - lm[9].x, y: lm[9].y }, up: f.up, blocked: g.blocked, score: g.score })
 
-          const phase = opts.getPhase()
-          const gesture = toGesture(count)
-
-          // 포인터: 검지만 폈을 때
-          if (count === 1 && f.up.index) {
-            const t = toViewport(lm[8].x, lm[8].y, innerWidth, innerHeight)
-            px = px === null ? t.x : px + (t.x - px) * SMOOTH
-            py = py === null ? t.y : py + (t.y - py) * SMOOTH
-            const wordId = nearestWord(opts.getWordRects(), px, py)
-            if (wordId !== pointWord) {
-              pointWord = wordId
-              pointSince = now
-              pointFired = false
-            }
-            let progress = 0
-            if (phase === 'idle' && wordId && !g.blocked) {
-              progress = Math.min(1, (now - pointSince) / HOLD_MS)
-              if (progress >= 1 && !pointFired) {
-                pointFired = true
-                emit({ type: 'WORD_POINTED', wordId, source: 'hand' })
-              }
-            }
-            opts.onPointer?.({ x: px, y: py, wordId, progress })
+          if (calibrating) {
+            // 보정 중에는 접고 펴는 것이 정상 동작이라 흔들림 차단을 적용하지 않는다
+            calibrationInput(g.outOfRange ? 'none' : shape)
           } else {
-            pointWord = null
-            pointFired = false
-            opts.onPointer?.(null)
-          }
-
-          // 메뉴 선택 / 취소. 한 번 확정되면 손 모양이 바뀌어야 다시 확정된다.
-          const done = stab.update(count, now, g.blocked)
-          if (done !== null) {
-            if (gesture.kind === 'fist' && phase !== 'idle') emit({ type: 'CANCEL' })
-            else if (gesture.kind === 'menu' && phase === 'menu')
-              emit({ type: 'MENU_SELECTED', choice: gesture.choice })
+            const intent = tracker.update(
+              { shape, thumbDeg, palmDeg: tiltDeg(lm[0], lm[9], aspect) },
+              opts.getPhase(),
+              now,
+              g.blocked,
+            )
+            if (intent) act(intent)
           }
         }
       }
@@ -198,7 +176,6 @@ export function startHandInput(emit: (ev: InputEvent) => void, opts: HandOptions
     stream?.getTracks().forEach((t) => t.stop())
     opts.video.srcObject = null
     hands?.close()
-    opts.onPointer?.(null)
     opts.onFrame?.(null)
   }
 }

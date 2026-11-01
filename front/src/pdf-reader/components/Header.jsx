@@ -1,8 +1,10 @@
+import { BookOpen } from './icons.jsx';
+
 export default function Header({ hasDoc, fileName, dark, onHome, onOpen, onInfo, onToggleTheme }) {
   return (
     <header>
       <button className="brand" onClick={onHome} title="홈으로" aria-label="Book항이 홈">
-        <span className="logo">📖</span>
+        <span className="logo"><BookOpen /></span>
         <span>Book항이</span>
         <span className="ver">v2.0</span>
       </button>

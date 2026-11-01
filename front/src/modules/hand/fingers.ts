@@ -14,7 +14,7 @@ const cos = (u: V, v: V) => (u.x * v.x + u.y * v.y + u.z * v.z) / (len(u) * len(
 
 interface FingerMeasure { reach: number; line2: number; straight3d: number; knuckle3d: number }
 export interface ThumbMeasure {
-  lat: number; clear: number; width: number; line2: number; away3d: number; side3d: number
+  lat: number; clear: number; width: number; line2: number; away3d: number; side3d: number; pinch: number
 }
 export type Measures = Record<Exclude<FingerName, 'thumb'>, FingerMeasure> & { thumb: ThumbMeasure }
 export interface FingersResult { up: Record<FingerName, boolean>; m: Measures; count: number }
@@ -72,6 +72,7 @@ export function measure(world: P[], image: P[], aspect = 640 / 480): Measures {
     line2: dist(p[2], p[4]) / (dist(p[2], p[3]) + dist(p[3], p[4]) + 1e-9),
     away3d: dist(w[4], w[17]) / dist(w[2], w[17]),
     side3d: cos(sub(w[4], w[2]), sub(w[5], w[17])),
+    pinch: dist(p[4], p[8]) / palm,    // 엄지 끝 ↔ 검지 끝 거리 (OK 표시면 작다)
   };
   return m;
 }
@@ -105,6 +106,11 @@ export function fingersUp(
   const edgeOn = t.width < TH.edgeWidth;
   up.thumb = (t2d || t3d) && (!edgeOn || t.side3d > TH.edgeSide3d);
   return { up, m, count: NAMES.filter((n) => up[n]).length };
+}
+
+// 네 손가락을 접은 자세에서 엄지가 벌어져 있는가. 기울여도 유지되도록 방향은 보지 않는다.
+export function thumbOpen(m: Measures, wasOpen = false) {
+  return m.thumb.line2 > TH.thumbLine - 0.1 && m.thumb.clear > (wasOpen ? TH.clearOff : TH.clearOn)
 }
 
 // 손이 화면 가장자리에 걸렸는지 (걸리면 MediaPipe가 손가락을 놓치기 쉬움)

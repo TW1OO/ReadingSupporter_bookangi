@@ -1,46 +1,46 @@
-# 손 인식 front 이식 현황
+# 손 인식 모듈 (front/src/modules/hand)
 
-원본 프로토타입: `back/app/services/hand/hand-test/` (브라우저 JS. 비교용으로 유지 중)
-이식 결과: `front/src/modules/hand/` — MediaPipe를 브라우저에서 직접 돌리므로 웹캠 프레임을 back으로 보내지 않는다.
+원본 프로토타입은 `back/app/services/hand/hand-test/`(브라우저 JS)입니다. 이를 옮긴 이 모듈이 MediaPipe를 브라우저에서 직접 돌리므로 웹캠 프레임을 서버로 보내지 않습니다. 사용자 동작 기준은 [INTERACTION.md](INTERACTION.md)를 따릅니다.
 
 ## 구성
-
 | 파일 | 역할 |
 |---|---|
-| `fingers.ts` | 손가락 펴짐 판정 (원본 `fingers.js`의 TS 포팅. 로직 동일) |
-| `posture.ts` | 자세 안내 `PostureGuard` (원본 `posture.js`의 TS 포팅) |
-| `gestures.ts` | 손가락 개수→제스처, 다수결, `HoldStabilizer`(유지 시간), 단어 스냅 `nearestWord`, 좌표 변환 `toViewport`, `HOLD_MS` |
-| `index.ts` | `startHandInput(emit, opts)`: 웹캠·MediaPipe·`InputEvent` 방출·정리 |
-| `ui/HandPanel.tsx` | 웹캠 미리보기, 자세 안내, 포인터 점, 인식 결과 출력 |
+| `fingers.ts` | 손가락 펴짐 판정, 엄지·검지 끝 거리 측정 |
+| `gestures.ts` | 손 모양 분류, 다수결, `HoldStabilizer`, 읽기용 `GestureTracker`, 보정용 `CalibrationGestureTracker` |
+| `posture.ts` | 자세 안내 `PostureGuard` (화면 끝, 거리, 흔들림) |
+| `index.ts` | `startHandInput(emit, opts)`: 웹캠, MediaPipe, InputEvent 방출, 정리 |
 
-에셋: `@mediapipe/tasks-vision` 1.1.1(고정). wasm은 `postinstall`로 `public/mediapipe/wasm`에 복사(git 제외), 모델 `hand_landmarker.task`는 `public/mediapipe/`에 커밋.
+에셋은 `@mediapipe/tasks-vision` 1.1.1(고정)입니다. wasm은 `scripts/copy-mediapipe.mjs`가 `public/mediapipe/wasm`으로 복사하고(git 제외), 모델은 `public/mediapipe/`에 커밋되어 있습니다.
 
-## 손 모양 → 결과
+## 손 모양
+최근 7프레임 다수결로 모양을 정합니다.
 
-각 모양을 `HOLD_MS`(700ms) 동안 유지해야 확정되고, 확정은 한 번만 일어난다(다른 모양으로 바뀌어야 다시 가능). 최근 7프레임 다수결로 개수를 정한다. 어느 손가락이든 개수만 센다.
-
-| 펴진 손가락 | 현재 phase | 결과 |
+| 모양 | 조건 | 쓰임 |
 |---|---|---|
-| 1 (검지) | idle | 포인터가 가까운 단어(60px 이내)로 스냅, 같은 단어 유지 시 `WORD_POINTED` (source: hand) |
-| 1 | menu | `MENU_SELECTED` meaning (뜻) |
-| 2 | menu | `MENU_SELECTED` explain (해설) |
-| 3 | menu | `MENU_SELECTED` search (검색) |
-| 4, 5 | 모두 | 이벤트 없음 (화면 출력에는 개수가 표시됨) |
-| 0 (주먹) | menu, result | `CANCEL` |
-| 0 (주먹) | idle | 이벤트 없음 |
-| 그 외 phase 조합 | | 이벤트 없음 (예: result에서 1~3) |
+| `fist` | 모두 접음 | 취소 |
+| `thumb` | 네 손가락을 접고 엄지를 벌림 | 문장 지정, 기울여서 이동 |
+| `confirm` | 엄지+검지 | 확정 |
+| `one` / `two` / `three` | 검지 / 검지+중지 / 검지+중지+약지 (엄지 접음) | 메뉴 |
+| `palm` | 네 손가락을 폄 | 문장 바꾸기, 쪽 넘기기, 결과 닫기, 보정 클릭 |
+| `ok` | 엄지·검지 끝이 맞닿고 나머지 세 손가락을 폄 | 보정 시작과 완료 |
 
-손이 화면 가장자리/너무 멀거나 가까움/인식 흔들림이면 확정이 막히고(화면에 "(대기)") 안내가 뜬다. 손이 사라지면 진행 상태가 초기화된다.
+## 튜닝 값
+모두 시작값입니다. 실제 웹캠과 조명에서 조정합니다.
 
-## 화면 출력
+| 값 | 위치 | 기본 |
+|---|---|---|
+| `HOLD_MS` 유지 시간 | `gestures.ts` | 700ms |
+| `TILT_DEG` / `REARM_DEG` 엄지 기울기 | `gestures.ts` | 35도 / 15도 |
+| `WAVE_DEG` / `WAVE_MS` 닫기 | `gestures.ts` | 45도 / 2초 |
+| `OK_PINCH` OK 판정 거리 | `gestures.ts` | 0.3 |
+| `PALM_CLICK_MS` / `PALM_REARM_MS` 보정 클릭 | `gestures.ts` | 150ms / 200ms |
+| `TH` 손가락 펴짐 | `fingers.ts` | |
+| `GUIDE` 자세 안내 | `posture.ts` | |
 
-"손 인식 켜기" 후 오른쪽 아래 패널: 개수(주먹/N개), 손가락별 ■□, 확신도, 최근 이벤트 5개.
+## 자세 차단
+손이 화면 끝에 걸리거나 너무 멀거나 가까우면, 또는 인식이 흔들리면 읽기 제스처를 막고 안내합니다. 보정 중에는 접고 펴는 것이 정상 동작이므로 흔들림 차단을 적용하지 않고, 화면 끝과 거리 조건만 봅니다(`outOfRange`).
 
-## 검증 현황
-- 합성 랜드마크로 0/1/2/3/5개 판정, 유지 시간·스냅·좌표 변환 단위 테스트 (`fingers.test.ts`, `gestures.test.ts`).
-- 원본 HTML은 실제 웹캠으로 확인됨. **이식본은 브라우저 실동작 확인 필요** (npm 번들 버전 1.1.1, 포인터 스냅).
-
-## 남은 일
-- 이식본 웹캠 확인 후 `hand-test/`(약 26MB) 제거
-- 사전 조회 결과(`lookup`)를 메뉴 선택에 연결, 결과 패널 UI
-- 조명 환경에서 `TH`(fingers.ts), `GUIDE`(posture.ts), `HOLD_MS` 재튜닝
+## 검증과 남은 일
+- 판정 로직은 합성 데이터로 단위 테스트합니다 (`*.test.ts`).
+- OK 표시와 보정 중 손 펴기는 실제 웹캠에서 아직 충분히 확인하지 못했습니다.
+- `hand-test/`(약 27MB)는 비교가 끝나면 지웁니다.

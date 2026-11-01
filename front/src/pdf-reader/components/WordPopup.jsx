@@ -1,22 +1,18 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { lookupWord } from '../lib/dictionary.js';
+import { explainWord, lookupWord } from '../lib/dictionary.js';
 
 const TABS = [
-  { id: 'meaning', label: '뜻', key: '1' },
-  { id: 'explanation', label: '해설', key: '2' },
-  { id: 'examples', label: '예시', key: '3' },
+  { id: 'meaning', label: '단어 뜻 해석', key: '1' },
+  { id: 'explain', label: '문장 해설', key: '2' },
+  { id: 'search', label: 'LLM 검색', key: '3' },
 ];
 
-export default function WordPopup({ selection, stageRef, onClose, gestureChoice = null }) {
+// 탭은 state(MenuChoice)가 결정합니다. 손가락·키보드·클릭 모두 onChoice 로 같은 이벤트를 보냅니다.
+export default function WordPopup({ selection, stageRef, onClose, choice, onChoice }) {
   const ref = useRef(null);
-  const [tab, setTab] = useState('meaning');
-
-  useEffect(() => {
-    if (gestureChoice === 1 || gestureChoice === 11) setTab('meaning');
-    if (gestureChoice === 2 || gestureChoice === 22) setTab('explanation');
-    if (gestureChoice === 3 || gestureChoice === 33) setTab('examples');
-  }, [gestureChoice]);
+  const tab = choice;
   const [entry, setEntry] = useState(null);
+  const [ai, setAi] = useState(null); // 해설·예시 탭을 처음 열 때 불러옵니다
   const [pos, setPos] = useState({ left: 0, top: 0, width: 360 });
   const [copied, setCopied] = useState('idle'); // idle | done | fail
 
@@ -24,13 +20,23 @@ export default function WordPopup({ selection, stageRef, onClose, gestureChoice 
   useEffect(() => {
     if (!selection) return;
     let cancelled = false;
-    setTab('meaning');
     setEntry(null);
-    lookupWord(selection.word)
+    setAi(null);
+    lookupWord(selection.word, selection.context)
       .then((e) => !cancelled && setEntry(e))
       .catch(() => !cancelled && setEntry({ error: true }));
     return () => { cancelled = true; };
   }, [selection]);
+
+  // 문맥 해설·예문 (로컬 LLM). 느릴 수 있어 뜻과 따로, 필요할 때만 요청합니다.
+  const needAi = !!selection && !!entry && !entry.error && (tab === 'explain' || tab === 'search');
+  const aiRequested = useRef(null);
+  useEffect(() => {
+    if (!needAi || aiRequested.current === selection) return;
+    aiRequested.current = selection;
+    explainWord({ surface: selection.word, lemma: entry.lemma, meaning: entry.meaning, context: selection.context })
+      .then((r) => { if (aiRequested.current === selection) setAi(r); });
+  }, [needAi, selection, entry]);
 
   // 선택 영역 근처에 배치 (아래 우선, 공간이 없으면 위)
   useLayoutEffect(() => {
@@ -44,7 +50,7 @@ export default function WordPopup({ selection, stageRef, onClose, gestureChoice 
     if (top + height > window.innerHeight - margin) top = rect.top - height - 10;
     top = Math.max(margin, Math.min(top, window.innerHeight - height - margin));
     setPos({ left, top, width });
-  }, [selection, entry, tab]);
+  }, [selection, entry, tab, ai]);
 
   // 바깥 클릭 / Esc 로 닫기 (PDF 영역 클릭은 새 선택을 위해 유지)
   useEffect(() => {
@@ -54,12 +60,12 @@ export default function WordPopup({ selection, stageRef, onClose, gestureChoice 
     };
     const onKey = (e) => {
       if (e.key === 'Escape') return onClose();
-      // 숫자 0 → 단어 설명창 닫기, 1·2·3 → 뜻·해설·예시
+      // 숫자 0 → 단어 설명창 닫기, 1·2·3 → 메뉴
       // 입력창 입력 중이거나 조합키가 눌린 경우는 제외합니다.
       if (e.ctrlKey || e.metaKey || e.altKey || e.target.matches?.('input, textarea')) return;
       if (e.key === '0') return onClose();
       const t = TABS.find((x) => x.key === e.key);
-      if (t) setTab(t.id);
+      if (t) onChoice(t.id);
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
@@ -67,7 +73,7 @@ export default function WordPopup({ selection, stageRef, onClose, gestureChoice 
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
     };
-  }, [selection, stageRef, onClose]);
+  }, [selection, stageRef, onClose, onChoice]);
 
   if (!selection) return null;
   const { word } = selection;
@@ -85,20 +91,26 @@ export default function WordPopup({ selection, stageRef, onClose, gestureChoice 
     window.open(`https://www.google.com/search?q=${encodeURIComponent(`"${word}" 뜻 예문`)}`, '_blank', 'noopener');
 
   let body;
-  if (!entry) {
+  if (!tab) {
+    body = <p className="popup-loading">손가락 1·2·3으로 메뉴를 고르세요. 주먹으로 취소합니다.</p>;
+  } else if (!entry) {
     body = <p className="popup-loading">뜻과 예문을 찾는 중…</p>;
   } else if (entry.error) {
     body = '사전 뜻을 가져오지 못했어요. 웹 검색으로 더 확인할 수 있습니다.';
   } else if (tab === 'meaning') {
     body = <p>1. {entry.part ? `[${entry.part}] ` : ''}{entry.meaning}</p>;
-  } else if (tab === 'explanation') {
-    body = entry.explanation
-      ? <p className="example">“{entry.explanation}”</p>
-      : '등록된 해설이 없어요. 웹 검색에서 찾아보세요.';
+  } else if (tab === 'explain') {
+    body = !ai
+      ? <p className="popup-loading">문장 해설을 준비하는 중…</p>
+      : ai.explanation
+        ? <p className="example">“{ai.explanation}”</p>
+        : '문장 해설은 로컬 LLM 연동 후 제공됩니다. 웹 검색에서 찾아보세요.';
   } else {
-    body = entry.examples?.length
-      ? entry.examples.slice(0, 5).map((ex, i) => <p key={i} className="example">“{ex}”</p>)
-      : '등록된 예문이 없어요. 웹 검색에서 예문을 찾아보세요.';
+    body = !ai
+      ? <p className="popup-loading">LLM 검색 중…</p>
+      : ai.examples?.length
+        ? ai.examples.slice(0, 5).map((ex, i) => <p key={i} className="example">“{ex}”</p>)
+        : 'LLM 검색은 로컬 LLM 연동 후 제공됩니다. 웹 검색에서 찾아보세요.';
   }
 
   return (
@@ -120,7 +132,7 @@ export default function WordPopup({ selection, stageRef, onClose, gestureChoice 
 
       <div className="popup-tabs">
         {TABS.map((t) => (
-          <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)} title={`${t.label} (${t.key}번 키)`}>
+          <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => onChoice(t.id)} title={`${t.label} (${t.key}번 키)`}>
             {t.key} {t.label}
           </button>
         ))}

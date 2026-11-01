@@ -20,6 +20,22 @@ export const VALIDATION_GRID: ReadonlyArray<readonly [number, number]> = [
   [0.5, 0.3], [0.5, 0.7], [0.3, 0.5], [0.7, 0.5],
 ];
 
+/**
+ * 마무리 확인용 점: 보정 점과도, 검증 점과도 겹치지 않는 안쪽 4곳.
+ * 재학습은 검증 점을 학습에 쓰므로, 마무리 효과는 처음 보는 위치에서 재야 정직하다.
+ */
+export const RECHECK_GRID: ReadonlyArray<readonly [number, number]> = [
+  [0.4, 0.4], [0.6, 0.4], [0.4, 0.6], [0.6, 0.6],
+];
+
+/** 검증 뒤 마무리 방식. retrain: 검증 점까지 합쳐 재학습 / bias: 검증에서 잰 쏠림을 좌표에서 뺀다 */
+export type FinishMode = 'retrain' | 'bias';
+
+export const FINISH_MODE_LABEL_KO: Record<FinishMode, string> = {
+  retrain: '재학습',
+  bias: '쏠림 보정',
+};
+
 export interface TargetPoint {
   id: number;
   x: number;
@@ -113,6 +129,43 @@ export function summarizeValidation(samples: ValidationSample[]): ValidationResu
     bias: { dx, dy },
     grade: gradeFromError(mean),
   };
+}
+
+/** 한 번의 보정 결과: 마무리 전(검증 1)과 마무리 후(검증 2). */
+export interface CalibrationReport {
+  mode: FinishMode;
+  before: ValidationResult;
+  after: ValidationResult;
+  viewport: { w: number; h: number };
+  at: Date;
+}
+
+/** 붙여넣기 좋은 텍스트 (대화창/메모/스프레드시트에 그대로). */
+export function formatReport(r: CalibrationReport): string {
+  const px = (v: number) => (Number.isFinite(v) ? `${Math.round(v)}px` : '-');
+  const line = (label: string, v: ValidationResult) =>
+    `${label}: 정확도 ${px(v.accuracyPx)} · 평균 오차 ${px(v.meanErrorPx)} · 90% ${px(v.p90ErrorPx)} · 쏠림 x ${Math.round(v.bias.dx)} y ${Math.round(v.bias.dy)} · 샘플 ${v.sampleCount}`;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const d = r.at;
+  const when = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const drift = r.before.postureDrift;
+  const lines = [
+    `[시선 보정 결과] ${when} · 마무리: ${FINISH_MODE_LABEL_KO[r.mode]} · 화면 ${r.viewport.w}x${r.viewport.h}`,
+    line('검증1(마무리 전)', r.before),
+    line('검증2(마무리 후)', r.after),
+    `변화: 정확도 ${signed(r.before.accuracyPx, r.after.accuracyPx)}px · 평균 오차 ${signed(r.before.meanErrorPx, r.after.meanErrorPx)}px`,
+  ];
+  if (drift) {
+    lines.push(`자세 이동: 위치 ${drift.pos.toFixed(3)} · 거리 ${drift.size.toFixed(3)} · 각도 ${drift.angle.toFixed(3)}`);
+  }
+  return lines.join('\n');
+}
+
+/** 표시된(반올림된) 값끼리의 차이. 텍스트 안의 숫자끼리 항상 맞아떨어지게 한다. */
+function signed(from: number, to: number): string {
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return '-';
+  const d = Math.round(to) - Math.round(from);
+  return d > 0 ? `+${d}` : `${d}`;
 }
 
 export const GRADE_LABEL_KO: Record<Grade, string> = {

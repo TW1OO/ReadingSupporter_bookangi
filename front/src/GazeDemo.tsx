@@ -3,7 +3,7 @@ import {
 	useGaze,
 	CalibrationOverlay,
 	GazeDebugOverlay,
-	type ValidationResult,
+	type CalibrationReport,
 } from "./modules/gaze";
 
 // 스무딩 실험: ?gaze&smooth=0.3,0.0005  (minCutoff,beta). 낮을수록 안정적이고 느리다.
@@ -15,7 +15,7 @@ const SMOOTHING =
 		: undefined;
 const SESSION_ID = Math.random().toString(36).slice(2, 10);
 
-function postMetrics(r: ValidationResult) {
+function postMetrics({ mode, before: r, after }: CalibrationReport) {
 	if (!r.sampleCount) return;
 	fetch("/api/gaze/metrics", {
 		method: "POST",
@@ -35,6 +35,14 @@ function postMetrics(r: ValidationResult) {
 				pose_drift_pos: r.postureDrift.pos,
 				pose_drift_size: r.postureDrift.size,
 				pose_drift_angle: r.postureDrift.angle,
+			}),
+			finish_mode: mode,
+			...(after.sampleCount > 0 && {
+				after_accuracy_px: after.accuracyPx,
+				after_mean_error_px: after.meanErrorPx,
+				after_p90_error_px: after.p90ErrorPx,
+				after_bias_dx: after.bias.dx,
+				after_bias_dy: after.bias.dy,
 			}),
 		}),
 	}).catch((e) => console.warn("메트릭 전송 실패", e));

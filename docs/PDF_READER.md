@@ -1,6 +1,6 @@
-# PDF 리더 (front/src/pdf-reader)
+# 리더 화면 (front/src/pdf-reader)
 
-PDF를 열고 단어를 선택하면 뜻·해설·예시를 보여주는 화면. 접속: `http://localhost:5173/` (기본 화면)
+PDF나 웹 글을 열고 단어를 선택하면 뜻·해설·예시를 보여주는 화면. 접속: `http://localhost:5173/` (기본 화면)
 (시선 데모는 `/?gaze`, 기존 샘플 화면은 `/?legacy`.)
 
 ## 실행
@@ -11,18 +11,25 @@ npm run dev           # Vite 만. 파일 업로드/드래그로만 열 때
 cd back && uvicorn app.main:app --reload   # 사전 조회(/api/lookup)
 ```
 
-## 포크 구조에 맞추며 바꾼 점
-- 위치: 저장소 루트가 아니라 `front/` 안. 기존 `modules/hand`, `modules/gaze`, `state` 는 건드리지 않았다.
-- 전역 CSS(`styles.css`)는 `?pdf` 일 때만 lazy 로드. 정적 import 하면 body/button/header 스타일이 다른 화면까지 바뀐다.
-- MediaPipe: CDN wasm(0.10.14) → 로컬 `public/mediapipe/wasm`(포크의 1.1.1과 항상 같은 버전), 얼굴 모델도 로컬 `face_landmarker.task`. 오프라인 부스에서도 동작.
-- Vite 프록시: `/api/pdf-proxy` 를 `/api` 보다 먼저 둔다(순서가 바뀌면 FastAPI 404).
-- `tsconfig`: `allowJs` 추가(JS/JSX 파일을 strict TS 프로젝트에서 import 하기 위해).
-- `lib/dictionary.js`: 실제 라우터 응답(우리말샘/DeepL/not_found/error)을 모두 처리. 서버 오류를 "백엔드 미연결 데모 데이터"로 덮지 않는다.
-- 손 포인터: 프레임마다 전체 리렌더하던 것을 DOM 직접 갱신으로 변경. 가장자리 여백 보정 + 평활화 + "포인터가 움직이면 유지 시간 재시작".
-- PDF 프록시: IPv6 `[::1]`/IPv4-mapped 주소 차단 보강, CORS `*` 제거.
+## 구조
+- 위치: `front/src/pdf-reader`. 스타일(`styles.css`)은 전역이라 PDF 리더 화면에서만 lazy 로드한다.
+- 입력: 손은 `modules/hand`, 시선은 `modules/gaze`, 마우스 드래그까지 모두 `InputEvent`로 `modules/state`에 보낸다. 단어 팝업의 탭도 `state.choice`를 따른다.
+- 시선: 시선 보정을 마친 뒤에 켜지며, 옅은 히트맵으로 시선을 따라간다. 뷰어에 들어오면 보정 안내와 손 인식이 자동으로 시작된다. 지표 전송은 `/?gaze` 데모에서만 한다.
+- 보안: `pdfjs-dist` 4.x(GHSA-wgrm-67xf-hhpq 패치) + `isEvalSupported: false`.
+- PDF 프록시: 사설망 주소 차단, 50MB 제한, 한글 파일명은 RFC 5987로 전달.
+- MediaPipe: 로컬 wasm(`public/mediapipe/wasm`)과 모델을 쓴다. 오프라인 부스에서도 동작.
+
+## 읽기 화면
+- 웹 글과 PDF가 같은 틀을 쓴다(`components/ReaderChrome.jsx`): 위에서 내려오는 머리글과 ⋮ 메뉴, 왼쪽 읽기 도구 패널, 아래 쪽 이동 막대, 오른쪽 위 시선·손 상태 표시.
+- 얼굴이 벗어나면 안내와 위치 그림을 보여 주고, 돌아오면 저절로 닫는다. PDF는 쪽 맞춤으로 열고 이동 막대에서 확대·회전한다.
+- 시선 보정 안내는 `CalibrationOverlay`의 `variant="reader"`로 카메라, 조명, 손 위치를 확인한다.
+
+## 웹 글 읽기
+- 링크로 연 웹 페이지는 `server/pdf-proxy.js`의 `/api/page-proxy`로 받아 Readability로 본문을 뽑고, `components/ArticleViewer.jsx`가 글자만 그려 양쪽 펼침으로 보여 준다. 원본 HTML은 화면에 넣지 않는다. 그림과 그림 설명은 표시하지 않는다(`removeImageBoxes`).
+- 홈의 `시연 자료 열기`는 `Landing.jsx`의 `DEMO_ARTICLE_URL` 기사를 연다. 기사 글을 저장소에 넣지 않고 열 때마다 원문에서 불러오므로 인터넷과 프록시가 필요하다. 공개 시연 전에 이용 허락을 확인한다.
+- 프록시는 로컬 전용이다. 공개 배포하려면 인증과 호출 제한이 필요하다. 접근을 막은 사이트를 우회하지 않는다.
 
 ## 남은 일 / 알려진 한계
-- 이 화면의 손·시선은 자체 훅(`hooks/useHandGestures.js`, `useGazeTracker.js`)이다. 팀 설계(손/시선은 `InputEvent`만 `state` 로 전달)와 달라 중복이 있다.
-  `modules/hand`(자세 안내·worldLandmarks 기반 판정)와 `modules/gaze`(보정·One Euro)가 더 정확하므로, 이후 `startHandInput` / `GazeController` 로 교체 권장.
-  단, PDF 텍스트 레이어는 단어가 아니라 텍스트 조각 단위라 `data-word-id` 단어 분할이 먼저 필요하다.
+- 해설·예시: 서버의 로컬 LLM으로 마지막에 연동한다. `POST /api/explain`과 화면은 연결돼 있고, `back/app/services/explain.py`의 `generate_explanation`만 채우면 된다. 지금은 `status: "unavailable"`을 돌려준다.
 - 백엔드 라우터 응답 형태와 `schemas.py`(LookupResponse)가 다르다. 프론트 어댑터가 둘 다 받지만 계약은 한쪽으로 맞추는 게 좋다.
+- 스캔 PDF처럼 글자 정보가 없는 문서는 단어를 고를 수 없다.

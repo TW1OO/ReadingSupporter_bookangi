@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { OneEuroFilter } from './oneEuro';
 import { DwellDetector } from './dwell';
 import { distanceToRect, groupLineRects, pickNearest } from './regionMapper';
-import { VALIDATION_GRID, buildPoints, gradeFromError, percentile, summarizeValidation } from './calibration';
+import { VALIDATION_GRID, buildPoints, formatReport, gradeFromError, percentile, summarizeValidation } from './calibration';
 
 const OPTS = { minDurationMs: 700, maxDispersionPx: 140, releaseRadiusPx: 180, windowMs: 2000 };
 
@@ -147,5 +147,39 @@ describe('calibration', () => {
       ...Array.from({ length: 50 }, () => ({ targetX: 500, targetY: 300, gazeX: 510, gazeY: 300 })), // 10px
     ];
     expect(summarizeValidation(samples).accuracyPx).toBeCloseTo(30, 6); // 샘플 수가 아니라 점 단위 평균
+  });
+});
+
+describe('formatReport', () => {
+  const v = (acc: number, mean: number, dx: number, dy: number) => ({
+    sampleCount: 140, meanErrorPx: mean, accuracyPx: acc, p90ErrorPx: mean * 1.6,
+    bias: { dx, dy }, grade: 'good' as const,
+  });
+  const report = {
+    mode: 'retrain' as const,
+    before: { ...v(95.4, 120.2, 12.3, 40.6), postureDrift: { pos: 0.0041, size: 0.0022, angle: 0.0113 } },
+    after: v(70.1, 98.7, 3, -8),
+    viewport: { w: 1920, h: 1065 },
+    at: new Date(2026, 9, 30, 14, 5),
+  };
+
+  it('붙여넣기 좋은 여러 줄 텍스트: 머리말, 검증1, 검증2, 변화, 자세', () => {
+    const lines = formatReport(report).split('\n');
+    expect(lines[0]).toBe('[시선 보정 결과] 2026-10-30 14:05 · 마무리: 재학습 · 화면 1920x1065');
+    expect(lines[1]).toBe('검증1(마무리 전): 정확도 95px · 평균 오차 120px · 90% 192px · 쏠림 x 12 y 41 · 샘플 140');
+    expect(lines[2]).toContain('검증2(마무리 후): 정확도 70px');
+    expect(lines[3]).toBe('변화: 정확도 -25px · 평균 오차 -21px'); // 표시값 99 - 120
+    expect(lines[4]).toBe('자세 이동: 위치 0.004 · 거리 0.002 · 각도 0.011');
+  });
+
+  it('쏠림 보정 방식이면 머리말에 표시되고, 자세 정보가 없으면 그 줄은 빠진다', () => {
+    const text = formatReport({ ...report, mode: 'bias', before: v(95, 120, 0, 0) });
+    expect(text).toContain('마무리: 쏠림 보정');
+    expect(text.split('\n')).toHaveLength(4);
+  });
+
+  it('잴 수 없었던 값은 - 로 쓴다', () => {
+    const empty = { ...v(NaN, NaN, 0, 0), sampleCount: 0 };
+    expect(formatReport({ ...report, after: empty })).toContain('검증2(마무리 후): 정확도 - · 평균 오차 -');
   });
 });
