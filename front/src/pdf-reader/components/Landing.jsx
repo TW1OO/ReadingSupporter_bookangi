@@ -1,13 +1,18 @@
 import { useState } from 'react';
 
+const DEMO_ARTICLE_URL = 'https://www.busan.com/view/busan/view.php?code=2026110112320909454';
+
 export default function Landing({ dragging, notice, onChooseFile, onOpenUrl, onInfo }) {
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const submit = async (e) => {
+  const submit = (e) => {
     e.preventDefault();
-    const value = url.trim();
+    open(url.trim());
+  };
+
+  const open = async (value) => {
     if (!value || loading) return;
     setLoading(true);
     setError('');
@@ -55,6 +60,11 @@ export default function Landing({ dragging, notice, onChooseFile, onOpenUrl, onI
             <p className="hint">웹 글은 본문 글자만 가져와 책처럼 펼쳐 보여 주며, 그림은 표시하지 않습니다. 로그인이 필요하거나 외부 접근을 막은 사이트는 열리지 않을 수 있습니다. 저작권이 있는 글은 개인 열람 용도로만 사용해 주세요.</p>
             {error && <p className="home-error" role="alert">{error}</p>}
           </form>
+
+          <div className="sample-row">
+            <span>시연 자료: 부산일보 기사 (원문에서 글자만 불러옵니다)</span>
+            <button type="button" disabled={loading} onClick={() => open(DEMO_ARTICLE_URL)}>시연 자료 열기</button>
+          </div>
         </section>
 
         <section className="notice-card">

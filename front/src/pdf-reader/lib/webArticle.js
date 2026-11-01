@@ -81,6 +81,21 @@ export function wikiBlocks(doc) {
   return out;
 }
 
+const IMAGE_BOX = '[class*="img"], [class*="image"], [class*="photo"], [class*="figure"]';
+const CAPTION_MAX_CHARS = 300; // 그림 상자의 글이 이보다 길면 본문까지 감싼 상자로 보고 남긴다
+
+// 뉴스 사이트는 그림 설명을 figcaption 대신 일반 div 에 넣기도 한다. 그림이 든 상자를 설명과 함께 지운다.
+export function removeImageBoxes(doc) {
+  for (const el of doc.querySelectorAll('[class*="caption"]')) el.remove();
+  for (const img of doc.querySelectorAll('img')) {
+    const box = img.closest(IMAGE_BOX);
+    if (box && box.textContent.trim().length <= CAPTION_MAX_CHARS) box.remove();
+  }
+}
+
+// 글자 크기 단추("가")와 기사 공유 문구는 본문이 아니다
+const isPageControl = (text) => text.length <= 1 || /기사\s?퍼가기$/.test(text);
+
 // 받아 온 HTML 에서 제목과 본문만 뽑는다. DOMParser 문서는 스크립트를 실행하지 않고 이미지도 받지 않는다.
 export function parseArticle(html, url) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -94,11 +109,12 @@ export function parseArticle(html, url) {
     const host = new URL(url).hostname;
     return { title: h1 || pageTitle, url, siteName: host, source: sourceLabel(host), blocks: wiki };
   }
+  removeImageBoxes(doc);
   const parsed = new Readability(doc, { charThreshold: 200 }).parse();
   if (!parsed?.content) throw new Error(NOT_FOUND);
   const root = new DOMParser().parseFromString(parsed.content, 'text/html').body;
   const title = (parsed.title || pageTitle || url).trim();
-  const blocks = htmlToBlocks(root).filter((b, i) => !(i === 0 && b.text === title));
+  const blocks = htmlToBlocks(root).filter((b, i) => !(i === 0 && b.text === title) && !isPageControl(b.text));
   // 메뉴만 있는 페이지를 본문으로 착각하지 않도록, 문장 길이의 블록으로 센다
   const body = blocks.filter((b) => b.text.length >= SENTENCE_CHARS).reduce((n, b) => n + b.text.length, 0);
   if (body < MIN_CHARS) throw new Error(NOT_FOUND);
