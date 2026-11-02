@@ -8,7 +8,7 @@ import { clamp } from '../lib/pdf.js';
 // 위에서 내려오는 머리글과 ⋮ 메뉴
 export function ReaderHeader({ open, title, dark, onHide, onOpenFile, onToggleTheme, menu, menuOpen, onMenuToggle }) {
   return (
-    <header className={`rd-header${open ? ' open' : ''}`} onMouseLeave={onHide}>
+    <header className={`rd-header${open ? ' open' : ''}`} onPointerLeave={(e) => { if (e.pointerType === 'mouse') onHide(); }}>
       <button className="rd-brand" onClick={menu.onHome} title="홈으로">
         <span className="rd-logo"><BookOpen /></span>
         <b>Book항이</b>
@@ -153,10 +153,33 @@ export function CameraPeek({ getStream, onClose }) {
   );
 }
 
+// 단어 조정 단추. 키보드가 없는 터치 기기에서만 보인다 (styles.css). 제스처와 같은 이벤트를 보낸다.
+export function TouchAdjustBar({ level, onMove, onBack, onConfirm, onCancel }) {
+  const unit = level === 'sentence' ? '문장' : '단어';
+  return (
+    <div className="rd-adjust" role="toolbar" aria-label={`${unit} 조정`}>
+      <button onClick={() => onMove(-1)}><ChevronLeft /> 이전 {unit}</button>
+      <button onClick={() => onMove(1)}>다음 {unit} <ChevronRight /></button>
+      {level !== 'sentence' && <button onClick={onBack}>문장 바꾸기</button>}
+      <button className="primary" onClick={onConfirm}><Check size={18} /> 확정</button>
+      <button onClick={onCancel}><Close size={18} /> 취소</button>
+    </div>
+  );
+}
+
 // 아래쪽 떠 있는 쪽 이동 막대. PDF 에서는 확대·회전도 쓴다.
 export function ReaderPager({ page, totalPages, pdf, onPageChange, onToggleSearch, onFullscreen }) {
   const [draft, setDraft] = useState(String(page));
   useEffect(() => setDraft(String(page)), [page]);
+  // 휴대폰에서는 쪽 이동만 두고 나머지는 더보기로 접는다 (styles.css)
+  const [moreOpen, setMoreOpen] = useState(false);
+  const navRef = useRef(null);
+  useEffect(() => {
+    if (!moreOpen) return undefined;
+    const onDown = (e) => { if (!navRef.current?.contains(e.target)) setMoreOpen(false); };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [moreOpen]);
   const commit = () => {
     const v = Number.parseInt(draft, 10);
     if (!Number.isFinite(v)) return setDraft(String(page));
@@ -165,7 +188,7 @@ export function ReaderPager({ page, totalPages, pdf, onPageChange, onToggleSearc
     onPageChange(next);
   };
   return (
-    <nav className="rd-pager" aria-label="쪽 이동">
+    <nav className="rd-pager" aria-label="쪽 이동" ref={navRef}>
       <button className="rd-icon" disabled={page <= 1} onClick={() => onPageChange(page - 1)} aria-label="이전 쪽"><ChevronLeft /></button>
       <span className="rd-page-no">
         <input
@@ -177,19 +200,22 @@ export function ReaderPager({ page, totalPages, pdf, onPageChange, onToggleSearc
         <span id="totalPages">/ {totalPages}</span>
       </span>
       <button className="rd-icon" disabled={page >= totalPages} onClick={() => onPageChange(page + 1)} aria-label="다음 쪽"><ChevronRight /></button>
-      <span className="rd-sep" />
-      {pdf && (
-        <>
-          <button className="rd-icon" onClick={pdf.onZoomOut} aria-label="축소"><Minus /></button>
-          <span className="rd-zoom">{Math.round(pdf.scale * 100)}%</span>
-          <button className="rd-icon" onClick={pdf.onZoomIn} aria-label="확대"><Plus /></button>
-          <button className="rd-icon" onClick={pdf.onFit} aria-label="쪽 맞춤" title="쪽 맞춤"><FitPage /></button>
-          <button className="rd-icon" onClick={pdf.onRotate} aria-label="회전" title="회전"><Rotate /></button>
-          <span className="rd-sep" />
-        </>
-      )}
-      <button className="rd-icon" onClick={onToggleSearch} aria-label="검색"><Search /></button>
-      <button className="rd-icon" onClick={onFullscreen} aria-label="전체 화면"><Fullscreen /></button>
+      <button className="rd-icon rd-more-btn" onClick={() => setMoreOpen((v) => !v)} aria-label="더보기" aria-expanded={moreOpen}><More /></button>
+      <div className={`rd-pager-extra${moreOpen ? ' open' : ''}`}>
+        <span className="rd-sep" />
+        {pdf && (
+          <>
+            <button className="rd-icon" onClick={pdf.onZoomOut} aria-label="축소"><Minus /></button>
+            <span className="rd-zoom">{Math.round(pdf.scale * 100)}%</span>
+            <button className="rd-icon" onClick={pdf.onZoomIn} aria-label="확대"><Plus /></button>
+            <button className="rd-icon" onClick={pdf.onFit} aria-label="쪽 맞춤" title="쪽 맞춤"><FitPage /></button>
+            <button className="rd-icon" onClick={pdf.onRotate} aria-label="회전" title="회전"><Rotate /></button>
+            <span className="rd-sep" />
+          </>
+        )}
+        <button className="rd-icon" onClick={() => { setMoreOpen(false); onToggleSearch(); }} aria-label="검색"><Search /></button>
+        <button className="rd-icon" onClick={() => { setMoreOpen(false); onFullscreen(); }} aria-label="전체 화면"><Fullscreen /></button>
+      </div>
     </nav>
   );
 }

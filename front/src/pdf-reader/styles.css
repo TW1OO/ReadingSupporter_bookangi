@@ -154,3 +154,79 @@ body.dark button.primary,body.dark #openBtn{color:#1d1c1a}
 .word-popup .popup-tabs button.active{border-color:var(--brand);color:var(--brand-ink)}
 .epub-page ::selection{background:#8a5a2b40}
 .logo svg{width:22px;height:22px}
+
+/* ───────── 화면 공통: 주소창과 노치를 피한다 ───────── */
+body,#root{height:100dvh}
+.rd-pager{bottom:calc(28px + env(safe-area-inset-bottom))}
+.rd-more-btn{display:none!important}
+.rd-pager-extra{display:contents}
+
+/* ───────── 패드 ───────── */
+.rd-adjust{display:none}
+@media (min-width:768px) and (max-width:1279px){
+  .article-paper{padding:64px 32px 104px}
+  .article-flow{font-size:20px;line-height:34px}
+  .block-title{font-size:32px}
+  .block-heading{font-size:23px}
+  .rd-reader.is-pdf #stage{padding:56px 16px 96px}
+}
+@media (min-width:768px) and (max-width:1279px) and (orientation:portrait){
+  .article-paper{padding:72px 56px 112px}
+  .article-flow{font-size:22px;line-height:38px}
+  .block-title{font-size:34px}
+}
+/* 터치 기기: 호버가 없고 손가락으로 누른다 */
+@media (pointer:coarse){
+  .rd-handle{width:160px;height:44px}
+  .rd-handle::after{left:60px}
+  .rd-reader .rd-icon,.rd-open-panel{width:44px;height:44px}
+  .rd-reader .rd-ghost{height:44px}
+  .rd-reader .rd-pill{height:44px}
+  .rd-reader .rd-btn.outline{height:44px}
+  .rd-reader .rd-menu button{padding:13px 10px}
+  .rd-reader .rd-link{padding:8px 0}
+  .rd-toggle{padding:13px 0}
+  .rd-toggle input{width:22px;height:22px}
+  .rd-reader .rd-camera-close{width:36px;height:36px}
+  input,textarea,select{font-size:16px} /* iOS 는 16px 보다 작은 입력창을 누르면 화면을 확대한다 */
+  .rd-page-no{font-size:16px}
+  .rd-pager{height:60px;border-radius:30px;bottom:calc(20px + env(safe-area-inset-bottom))}
+  .rd-reader #searchBar button{width:44px;height:44px}
+  .rd-reader .rd-thumbs .thumb{padding:8px}
+  .word-popup .popup-close{min-width:44px;min-height:44px}
+  .word-popup .popup-tabs button{min-height:44px}
+  .word-popup .popup-actions button,.word-popup .popup-actions a{min-height:44px;display:inline-flex;align-items:center}
+  .rd-reader .rd-icon:hover:not(:disabled),.rd-reader .rd-open-panel:hover,.rd-reader .rd-ghost:hover,.rd-reader .rd-menu button:hover{background:transparent}
+  .rd-adjust{position:fixed;left:50%;bottom:92px;z-index:31;transform:translateX(-50%);display:flex;flex-wrap:wrap;justify-content:center;gap:6px;width:max-content;max-width:calc(100vw - 24px);padding:8px;border:1px solid var(--rd-line);border-radius:18px;background:var(--rd-surface);box-shadow:0 6px 24px #2a22121a}
+  .rd-reader .rd-adjust button{display:inline-flex;align-items:center;gap:4px;min-height:48px;padding:0 14px;border-radius:12px;font-size:14px;background:var(--rd-soft);cursor:pointer}
+  .rd-reader .rd-adjust button.primary{background:var(--rd-accent);color:var(--rd-surface);font-weight:700}
+  .rd-adjust{bottom:calc(92px + env(safe-area-inset-bottom))}
+  .flow-guide{bottom:calc(172px + env(safe-area-inset-bottom))}
+}
+
+/* ───────── 휴대폰 세로 ───────── */
+@media (max-width:767px){
+  .article-paper{padding:60px 20px 100px}
+  .article-flow{font-size:18px;line-height:30px}
+  .article-block{margin-bottom:16px}
+  .block-title{font-size:26px}
+  .block-heading{margin:22px 0 10px;font-size:21px}
+  .article-source{margin-bottom:20px;font-size:12px}
+  .block-code{font-size:14px;line-height:22px}
+  .rd-more-btn{display:inline-grid!important}
+  .rd-pager{padding:0 8px}
+  .rd-reader.is-pdf #stage{padding:60px 8px 100px}
+  .rd-pager-extra{display:none;position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);align-items:center;justify-content:center;flex-wrap:wrap;gap:2px;width:max-content;max-width:calc(100vw - 24px);padding:6px 8px;border:1px solid var(--rd-line);border-radius:18px;background:var(--rd-surface);box-shadow:0 6px 24px #2a22121a}
+  .rd-pager-extra.open{display:flex}
+  .rd-pager-extra .rd-sep{display:none}
+}
+/* ───────── 휴대폰 가로: 세로 공간이 적다 ───────── */
+@media (max-height:500px){
+  .article-paper{padding:48px 56px 72px}
+  .rd-reader.is-pdf #stage{padding:48px 22px 68px}
+  .article-flow{font-size:18px;line-height:30px}
+  .block-title{font-size:26px}
+  .rd-pager{height:48px;bottom:calc(8px + env(safe-area-inset-bottom))}
+  .rd-open-panel{left:max(8px,env(safe-area-inset-left));top:4px}
+  .rd-status{right:max(8px,env(safe-area-inset-right));top:4px}
+}

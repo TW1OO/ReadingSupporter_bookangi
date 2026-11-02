@@ -1,13 +1,12 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { cleanSelection } from '../lib/text.js';
 import { buildWords, nearestWordIndex, sentenceText } from '../lib/pdfWords.js';
-
-const SPREAD_MIN_WIDTH = 820; // 이보다 좁으면 한쪽만 보여 준다
-const GAP = 104;
+import { columnGap, isSpread } from '../lib/articleLayout.js';
+import { usePointerTap } from '../hooks/usePointerTap.js';
 
 /**
  * 웹 글을 책처럼 양쪽 펼침으로 보여 주는 화면. PdfViewer 와 같은 ref(targetAt, wordInfo)를 노출합니다.
- * 원본 HTML 을 넣지 않고 글자만 그립니다. 글자 크기와 줄 간격은 시선 인식을 위해 고정입니다.
+ * 원본 HTML 을 넣지 않고 글자만 그립니다. 글자 크기와 줄 간격은 시선 인식을 위해 화면 종류별로 고정입니다.
  */
 const ArticleViewer = forwardRef(function ArticleViewer(
   { article, page, gazeRegionId, target, highlightTerm, stageRef, onPageCount, onSelectText, onClickPoint },
@@ -30,10 +29,11 @@ const ArticleViewer = forwardRef(function ArticleViewer(
     const measure = () => {
       const w = clip.clientWidth;
       if (!w) return;
-      const spread = w >= SPREAD_MIN_WIDTH;
+      const spread = isSpread(w, clip.clientHeight);
+      const gap = columnGap(w);
       flow.style.columnCount = spread ? '2' : '1';
-      flow.style.columnGap = `${GAP}px`;
-      const stride = w + GAP; // 한 화면(양쪽)을 넘기는 거리
+      flow.style.columnGap = `${gap}px`;
+      const stride = w + gap; // 한 화면(양쪽)을 넘기는 거리
       const end = flow.querySelector('[data-end]');
       const offset = end.getBoundingClientRect().left - flow.getBoundingClientRect().left;
       wordsRef.current = null;
@@ -87,7 +87,8 @@ const ArticleViewer = forwardRef(function ArticleViewer(
       const el = flowRef.current?.querySelector(`[data-gaze-paragraph="a${i}"]`);
       if (!el) return null;
       const offset = el.getBoundingClientRect().left - flowRef.current.getBoundingClientRect().left;
-      return Math.floor(offset / (clipRef.current.clientWidth + GAP)) + 1;
+      const w = clipRef.current.clientWidth;
+      return Math.floor(offset / (w + columnGap(w))) + 1;
     },
     wordInfo(id) {
       if (!clipRef.current) return null;
@@ -145,12 +146,13 @@ const ArticleViewer = forwardRef(function ArticleViewer(
       cb.current.onSelectText?.({ word, context: el.textContent, rect: { left: rect.left, top: rect.top, bottom: rect.bottom } });
     }, 180);
   };
+  const tap = usePointerTap(handleSelection);
 
   return (
     <section id="stage" ref={stageRef}>
       <div className="article-paper">
         <div className="article-clip" ref={clipRef}>
-          <div className="article-flow" ref={flowRef} onMouseUp={(e) => handleSelection({ x: e.clientX, y: e.clientY })}>
+          <div className="article-flow" ref={flowRef} {...tap}>
             <h1 className="article-block block-title" data-gaze-paragraph="a-title">{article.title}</h1>
             <p className="article-source">{article.source ?? article.siteName}</p>
             {article.blocks.map((b, i) => (

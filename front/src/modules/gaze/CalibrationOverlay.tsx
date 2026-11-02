@@ -84,15 +84,13 @@ export function CalibrationOverlay({ controller, onDone, onCancel, variant = 'de
   const calPoses = useRef<Pose[]>([]);
   const valPoses = useRef<Pose[]>([]);
 
-  const calPoints = useMemo(() => buildPoints(window.innerWidth, window.innerHeight), []);
-  const valPoints = useMemo(
-    () => buildPoints(window.innerWidth, window.innerHeight, VALIDATION_GRID),
-    [],
-  );
-  const recheckPoints = useMemo(
-    () => buildPoints(window.innerWidth, window.innerHeight, RECHECK_GRID),
-    [],
-  );
+  // 점 위치는 보정을 시작할 때의 화면 크기로 정한다 (패드를 돌린 뒤에도 맞도록)
+  const [viewport, setViewport] = useState({ w: window.innerWidth, h: window.innerHeight });
+  const [videoRatio, setVideoRatio] = useState(16 / 9);
+  const [rotated, setRotated] = useState(false);
+  const calPoints = useMemo(() => buildPoints(viewport.w, viewport.h), [viewport]);
+  const valPoints = useMemo(() => buildPoints(viewport.w, viewport.h, VALIDATION_GRID), [viewport]);
+  const recheckPoints = useMemo(() => buildPoints(viewport.w, viewport.h, RECHECK_GRID), [viewport]);
 
   // 보정 중에는 암묵 학습 off, 종료 시 복구 + 미리보기 숨김
   useEffect(() => {
@@ -120,6 +118,7 @@ export function CalibrationOverlay({ controller, onDone, onCancel, variant = 'de
     const id = window.setInterval(() => {
       setHandIn(isInHandBox(getHandCenter?.()));
       if (!video || !ctx || video.readyState < 2) return;
+      if (video.videoWidth && video.videoHeight) setVideoRatio(video.videoWidth / video.videoHeight);
       ctx.drawImage(video, 0, 0, 32, 24);
       setBright(isBrightEnough(meanLuma(ctx.getImageData(0, 0, 32, 24).data)));
     }, 400);
@@ -250,6 +249,8 @@ export function CalibrationOverlay({ controller, onDone, onCancel, variant = 'de
     // 이전 학습 데이터와 쏠림 보정을 지우고 새로 시작
     void controller.resetTraining();
     controller.captureReference(); // 지금 자세를 기준으로 삼는다
+    setViewport({ w: window.innerWidth, h: window.innerHeight });
+    setRotated(false);
     calPoses.current = [];
     valPoses.current = [];
     samples.current = [];
@@ -279,6 +280,19 @@ export function CalibrationOverlay({ controller, onDone, onCancel, variant = 'de
     if (report) onDone(report);
   };
 
+  // 보정 중에 화면을 돌리면 지금까지 모은 값이 맞지 않으므로 처음으로 돌아간다
+  const onRotate = useRef(() => {});
+  onRotate.current = () => {
+    if (phase === 'intro') return;
+    setRotated(true);
+    retry();
+  };
+  useEffect(() => {
+    const listener = () => onRotate.current();
+    window.addEventListener('orientationchange', listener);
+    return () => window.removeEventListener('orientationchange', listener);
+  }, []);
+
   const onGesture = useRef<(g: 'ok' | 'palm') => void>(() => {});
   onGesture.current = (g) => {
     if (g === 'palm' && phase === 'calibrate') handleTargetClick();
@@ -306,7 +320,11 @@ export function CalibrationOverlay({ controller, onDone, onCancel, variant = 'de
         <div className="gz-setup">
           <small>시작 전 한 번만</small>
           <h2>카메라 위치를 맞춰 주세요</h2>
-          <div className="gz-setup-view">
+          {rotated && <p role="status">화면 방향이 바뀌어 보정을 처음부터 다시 해요.</p>}
+          <div
+            className={`gz-setup-view${videoRatio < 1 ? ' gz-setup-view--portrait' : ''}`}
+            style={{ '--gz-ar': videoRatio } as CSSProperties}
+          >
             <video ref={videoRef} autoPlay muted playsInline />
             <span className={`gz-face-chip${poseText !== '얼굴 없음' && poseText ? ' ok' : ''}`}>
               <i />{poseText !== '얼굴 없음' && poseText ? '얼굴 인식됨' : '얼굴을 찾는 중'}
