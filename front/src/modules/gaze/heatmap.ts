@@ -15,6 +15,8 @@ export interface HeatmapOptions {
   saturation: number;
   /** 가장 진할 때의 불투명도. 글을 가리지 않도록 낮게 둔다 */
   maxAlpha: number;
+  /** 옅을 때와 진할 때의 색 [r, g, b]. 없으면 주황 */
+  colors?: { light: readonly number[]; deep: readonly number[] };
 }
 
 export const DEFAULT_HEATMAP: HeatmapOptions = {
@@ -37,10 +39,22 @@ export const READING_HEATMAP: HeatmapOptions = {
 const LIGHT = [255, 204, 150];
 const DEEP = [230, 106, 18];
 
+/**
+ * 어두운 화면의 웹 글용: 글자 뒤에 깔아 글자를 가리지 않는다. 채도 낮은 호박색으로 배경만 살짝 데운다.
+ * 흰색이나 밝은 보색은 어두운 화면에서 눈부시고 피로하므로 쓰지 않는다. 가장 진할 때 배경이 #52402c 정도가 된다.
+ */
+export const READING_HEATMAP_DARK: HeatmapOptions = {
+  ...READING_HEATMAP,
+  maxAlpha: 0.3,
+  colors: { light: [176, 128, 74], deep: [214, 150, 78] },
+};
+
 /** 쌓인 양(intensity) → 색. t는 0~1로 포화되고, 투명도와 색 진하기가 함께 올라간다. */
 export function heatColor(intensity: number, opts: HeatmapOptions = DEFAULT_HEATMAP) {
   const t = 1 - Math.exp(-Math.max(0, intensity) / (opts.saturation / 2));
-  const mix = (i: number) => Math.round(LIGHT[i] + (DEEP[i] - LIGHT[i]) * t);
+  const light = opts.colors?.light ?? LIGHT;
+  const deep = opts.colors?.deep ?? DEEP;
+  const mix = (i: number) => Math.round(light[i] + (deep[i] - light[i]) * t);
   return { r: mix(0), g: mix(1), b: mix(2), a: opts.maxAlpha * t };
 }
 

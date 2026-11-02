@@ -10,9 +10,12 @@ import './gaze.css';
 export function GazeHeatLayer({
   controller,
   options = DEFAULT_HEATMAP,
+  under = false,
 }: {
   controller: GazeController;
   options?: HeatmapOptions;
+  /** 글자 뒤에 깐다. 곱하기는 어두운 배경에서 보이지 않고, 글자 위에 밝게 겹치면 글자를 가린다 */
+  under?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -57,5 +60,5 @@ export function GazeHeatLayer({
     };
   }, [controller, options]);
 
-  return <canvas ref={canvasRef} className="gz-heat" aria-hidden="true" />;
+  return <canvas ref={canvasRef} className={`gz-heat${under ? ' gz-heat--under' : ''}`} aria-hidden="true" />;
 }

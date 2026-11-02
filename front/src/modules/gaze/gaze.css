@@ -61,6 +61,7 @@
   position: fixed; left: 0; top: 0; width: 100vw; height: 100vh;
   pointer-events: none; z-index: 7998; mix-blend-mode: multiply;
 }
+.gz-heat--under { z-index: 0; mix-blend-mode: normal; }
 .gz-debug-line {
   position: fixed; pointer-events: none; z-index: 7999;
   background: rgba(224, 164, 88, 0.14); outline: 1px solid rgba(224, 164, 88, 0.5);
