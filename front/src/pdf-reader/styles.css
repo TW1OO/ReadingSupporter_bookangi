@@ -150,6 +150,11 @@ body.dark button.dark:hover{background:#ece7da}
 body.dark .home-error{background:#3d2420;color:#f2c4bd}
 .drop-overlay{background:#faf5eae6}
 .modal-backdrop{background:#2b2a2773}
+.modal{width:min(600px,100%)}
+.modal-group{margin-top:14px}
+.modal-group h3{margin:0 0 2px;font-size:13px;font-weight:700;color:var(--brand-ink)}
+.modal dd{word-break:keep-all}
+.modal-head button{min-width:36px;min-height:36px}
 body.dark button.primary,body.dark #openBtn{color:#1d1c1a}
 .word-popup .popup-tabs button.active{border-color:var(--brand);color:var(--brand-ink)}
 .epub-page ::selection{background:#8a5a2b40}
