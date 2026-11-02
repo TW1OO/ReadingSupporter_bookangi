@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_HEATMAP, GazeHeatmap, READING_HEATMAP, heatColor } from './heatmap';
+import { DEFAULT_HEATMAP, GazeHeatmap, READING_HEATMAP, READING_HEATMAP_DARK, heatColor } from './heatmap';
 
 describe('heatColor', () => {
   it('쌓인 양이 많을수록 불투명하고 진한(초록·파랑이 적은) 주황이 된다', () => {
@@ -75,3 +75,16 @@ describe('READING_HEATMAP', () => {
     expect(h.intensityAt(200, 300)).toBeLessThan(before / 2);
   });
 });
+
+describe('READING_HEATMAP_DARK', () => {
+  it('어두운 화면용 색은 흰색에 가깝지 않은 차분한 호박색이다', () => {
+    const { r, g, b, a } = heatColor(1e6, READING_HEATMAP_DARK);
+    expect(Math.max(r, g, b)).toBeLessThan(230)
+    expect(r).toBeGreaterThan(g)
+    expect(g).toBeGreaterThan(b)
+    expect(a).toBeLessThanOrEqual(READING_HEATMAP_DARK.maxAlpha)
+  })
+  it('색을 지정하지 않으면 기존 주황을 쓴다', () => {
+    expect(heatColor(1e6, READING_HEATMAP)).toMatchObject({ r: 230, g: 106, b: 18 })
+  })
+})

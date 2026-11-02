@@ -19,6 +19,9 @@ export interface HandFrame {
   up: Record<FingerName, boolean>
   blocked: boolean
   score: number // MediaPipe 손 인식 확신도
+  fps: number // 초당 처리한 프레임 수 (느릴 때 원인 확인용)
+  ms: number // 한 프레임 인식에 걸린 시간
+  delegate: 'GPU' | 'CPU' // CPU 로 돌면 크게 느려진다
 }
 
 export interface HandOptions {
@@ -39,6 +42,7 @@ export interface HandOptions {
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, '')
 const WASM_DIR = `${BASE}/mediapipe/wasm`
 const MODEL_PATH = `${BASE}/mediapipe/hand_landmarker.task`
+const HAND_INPUT_WIDTH = 640
 
 // 웹캠 → MediaPipe(브라우저) → InputEvent. gaze 모듈을 import 하지 않는다. 동작은 docs/INTERACTION.md.
 // 반환값을 호출하면 카메라와 모델을 정리한다.
@@ -60,9 +64,11 @@ export function startHandInput(emit: (ev: InputEvent) => void, opts: HandOptions
         minTrackingConfidence: 0.6,
       })
     let landmarker: HandLandmarker
+    let delegate: 'GPU' | 'CPU' = 'GPU'
     try {
       landmarker = await make('GPU')
     } catch {
+      delegate = 'CPU'
       landmarker = await make('CPU')
     }
     hands = landmarker
@@ -83,6 +89,16 @@ export function startHandInput(emit: (ev: InputEvent) => void, opts: HandOptions
     const calibration = new CalibrationGestureTracker()
     let lastGuideKey: string | null = null
     let lastT = -1
+
+    // 카메라는 시선과 같은 1280×720 으로 받되, 손 인식에는 줄여서 넣는다. 손 모델 입력은 어차피 작아서
+    // 정확도는 그대로이고 프레임마다 옮기는 영상이 줄어든다(시선 모델과 같이 돌 때 특히).
+    const frame = document.createElement('canvas')
+    frame.width = HAND_INPUT_WIDTH
+    frame.height = Math.round(HAND_INPUT_WIDTH / ((video.videoWidth / video.videoHeight) || 16 / 9))
+    const frameCtx = frame.getContext('2d')
+    let fps = 0
+    let ms = 0
+    let lastFrameAt = 0
 
     const clearHand = () => {
       prevUp = {}
@@ -115,7 +131,18 @@ export function startHandInput(emit: (ev: InputEvent) => void, opts: HandOptions
       const now = performance.now()
       if (video.currentTime !== lastT) {
         lastT = video.currentTime
-        const res = landmarker.detectForVideo(video, now)
+        const t0 = performance.now()
+        let res
+        if (frameCtx) {
+          frameCtx.drawImage(video, 0, 0, frame.width, frame.height)
+          res = landmarker.detectForVideo(frame, now)
+        } else {
+          res = landmarker.detectForVideo(video, now)
+        }
+        // 최근 값 쪽으로 천천히 따라가는 평균
+        ms += (performance.now() - t0 - ms) * 0.1
+        if (lastFrameAt) fps += (1000 / (now - lastFrameAt) - fps) * 0.1
+        lastFrameAt = now
         const calibrating = opts.isCalibrating?.() ?? false
         const calibrationInput = (shape: Shape) => {
           const g = calibration.update(shape, now)
@@ -145,7 +172,7 @@ export function startHandInput(emit: (ev: InputEvent) => void, opts: HandOptions
             opts.onGuide?.(guideKey === g.key ? { level: g.level, msg: g.msg } : { level: 'ok', msg: '' })
           }
 
-          opts.onFrame?.({ count: f.count, shape, thumbDeg, center: { x: 1 - lm[9].x, y: lm[9].y }, up: f.up, blocked: g.blocked, score: g.score })
+          opts.onFrame?.({ count: f.count, shape, thumbDeg, center: { x: 1 - lm[9].x, y: lm[9].y }, up: f.up, blocked: g.blocked, score: g.score, fps: Math.round(fps), ms: Math.round(ms), delegate })
 
           if (calibrating) {
             // 보정 중에는 접고 펴는 것이 정상 동작이라 흔들림 차단을 적용하지 않는다
@@ -156,6 +183,8 @@ export function startHandInput(emit: (ev: InputEvent) => void, opts: HandOptions
               opts.getPhase(),
               now,
               g.blocked,
+              // 엄지를 기울이는 동안 엄지 판정이 흔들려 손가락 개수가 바뀌는 것은 정상이라 흔들림 차단을 빼고 본다
+              g.outOfRange,
             )
             if (intent) act(intent)
           }

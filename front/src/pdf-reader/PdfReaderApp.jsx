@@ -2,7 +2,7 @@ import './styles.css';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { initialState, reduce } from '@/modules/state/machine';
 import { startHandInput } from '@/modules/hand';
-import { CalibrationOverlay, GazeHeatLayer, READING_HEATMAP, toInputEvent, useGaze } from '@/modules/gaze';
+import { CalibrationOverlay, GazeHeatLayer, READING_HEATMAP, READING_HEATMAP_DARK, toInputEvent, useGaze } from '@/modules/gaze';
 import Header from './components/Header.jsx';
 import { CameraPeek, FaceGuideCard, FaceToast, ReaderHeader, ReaderPager, ReaderPanel, StatusPill, TouchAdjustBar } from './components/ReaderChrome.jsx';
 import { ChevronLeft, ChevronRight } from './components/icons.jsx';
@@ -102,8 +102,10 @@ export default function PdfReaderApp() {
   const selection = useMemo(() => {
     if (!input.wordId) return null;
     if (picked?.id === input.wordId) return picked;
-    return viewerRef.current?.wordInfo(input.wordId) ?? null;
-  }, [input.wordId, picked]);
+    const info = viewerRef.current?.wordInfo(input.wordId) ?? null;
+    // 문장 해설은 그 단어가 들어 있는 문장 전체를 다룬다
+    return info && input.scope === 'sentence' ? { ...info, word: info.context, scope: 'sentence' } : info;
+  }, [input.wordId, input.scope, picked]);
   const closePopup = useCallback(() => dispatch({ type: 'CANCEL' }), []);
   const chooseTab = useCallback((choice) => dispatch({ type: 'MENU_SELECTED', choice }), []);
   useEffect(() => {
@@ -293,7 +295,7 @@ export default function PdfReaderApp() {
           handCenterRef.current = f ? f.center : null;
           setHandSeen(!!f);
           if (handDebugRef.current) {
-            handDebugRef.current.textContent = f ? `손 모양: ${SHAPE_LABEL[f.shape]} · 엄지 ${Math.round(f.thumbDeg)}°` : '손이 보이지 않습니다';
+            handDebugRef.current.textContent = f ? `손 모양: ${SHAPE_LABEL[f.shape]} · 엄지 ${Math.round(f.thumbDeg)}° · ${f.fps}fps ${f.ms}ms ${f.delegate}` : '손이 보이지 않습니다';
           }
         },
         onGuide: (g) => setHandStatus(g.msg || HAND_READY),
@@ -541,6 +543,7 @@ export default function PdfReaderApp() {
   const gazeDot = !gazeOn ? 'off' : faceLost ? 'warn' : 'ok';
   const handDot = !handEnabled ? 'off' : handSeen ? 'ok seen' : 'ok';
   const canPeek = handEnabled || gazeOn;
+  const heatUnder = dark && !!article;
   useEffect(() => {
     if (!canPeek) setPeek(false);
   }, [canPeek]);
@@ -579,6 +582,8 @@ export default function PdfReaderApp() {
   return (
     <>
       <div className={`rd-reader${pdfDoc ? ' is-pdf' : ''}`}>
+        {/* 어두운 화면의 웹 글은 글자 뒤에 깐다. 위에 겹치면 밝아진 배경이 글자를 가린다. PDF 는 쪽 그림이 불투명해 위에 둔다 */}
+        {gazeOn && !calibrating && heatUnder && <GazeHeatLayer controller={gaze.controller} options={READING_HEATMAP_DARK} under />}
         <div className="rd-stage" onTouchStart={onSwipeStart} onTouchEnd={onSwipeEnd}>
           {article ? (
             <ArticleViewer
@@ -635,6 +640,7 @@ export default function PdfReaderApp() {
             level={input.target?.level ?? 'word'}
             onMove={(direction) => dispatch({ type: 'TARGET_MOVED', direction })}
             onBack={() => dispatch({ type: 'TARGET_BACK' })}
+            onExplain={() => dispatch({ type: 'SENTENCE_EXPLAIN' })}
             onConfirm={() => dispatch({ type: 'TARGET_CONFIRMED' })}
             onCancel={closePopup}
           />
@@ -706,7 +712,7 @@ export default function PdfReaderApp() {
         />
       </div>
 
-      {gazeOn && !calibrating && <GazeHeatLayer controller={gaze.controller} options={READING_HEATMAP} />}
+      {gazeOn && !calibrating && !heatUnder && <GazeHeatLayer controller={gaze.controller} options={READING_HEATMAP} />}
       {hasDoc && gazeOn && !calibrating && input.phase === 'idle' && edge && <div className={`edge-glow ${edge}`} aria-hidden="true" />}
       {(input.phase === 'adjusting' || input.phase === 'result' || flowNotice) && (
         <div className={`flow-guide${input.phase === 'idle' ? '' : ' is-gesture'}`} role="status">

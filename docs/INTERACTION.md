@@ -10,6 +10,7 @@
 | 단어 조정 | 엄지를 기울여 앞뒤 단어로 이동 | `TARGET_MOVED` | `adjusting` / `word` |
 | 문장 바꾸기 | 손가락 모두 펴기 → 엄지 기울여 앞뒤 문장으로 이동 → 엄지+검지 | `TARGET_BACK`, `TARGET_MOVED`, `TARGET_CONFIRMED` | `adjusting` / `sentence` |
 | 단어 확정 | 엄지+검지 들기 | `TARGET_CONFIRMED` | `menu` |
+| 문장 해설 | 문장 조정 중 터치 단추 `해설` | `SENTENCE_EXPLAIN` | `result` (`scope: sentence`) |
 | 메뉴 선택 | 손가락 1=단어 뜻 해석, 2=문장 해설, 3=LLM 검색 | `MENU_SELECTED` | `result` |
 | 닫기 | 손을 펴고 양쪽으로 45도 이상 흔들기 | `CLOSE` | `idle` |
 | 그만두기 | 주먹 (어느 단계에서나) | `CANCEL` | `idle` |

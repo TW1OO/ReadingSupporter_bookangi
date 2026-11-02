@@ -5,7 +5,7 @@ export { useGaze } from "./useGaze";
 export { CalibrationOverlay } from "./CalibrationOverlay";
 export { GazeDebugOverlay } from "./GazeDebugOverlay";
 export { GazeHeatLayer } from "./GazeHeatLayer";
-export { READING_HEATMAP } from "./heatmap";
+export { READING_HEATMAP, READING_HEATMAP_DARK } from "./heatmap";
 export type {
 	GazeInputEvent,
 	GazeRegion,

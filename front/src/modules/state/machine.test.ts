@@ -76,3 +76,21 @@ describe('제스처 단어 조정 흐름', () => {
     expect(reduce(menu, { type: 'CLOSE' })).toBe(menu)
   })
 })
+
+describe('문장 해설', () => {
+  const explain: InputEvent = { type: 'SENTENCE_EXPLAIN' }
+  it('문장 조정 중에는 그 문장의 해설을 바로 연다', () => {
+    const s = run([lock(1), back, next, explain])
+    expect(s).toMatchObject({ phase: 'result', choice: 'explain', scope: 'sentence', wordId: 'd', target: null })
+  })
+  it('단어 조정 중에는 무시한다', () => {
+    const s = run([lock(1)])
+    expect(reduce(s, explain)).toBe(s)
+  })
+  it('문장 해설에서는 다른 메뉴로 바뀌지 않고, 닫으면 단어 범위로 돌아간다', () => {
+    const s = run([lock(1), back, explain])
+    expect(reduce(s, { type: 'MENU_SELECTED', choice: 'meaning' })).toBe(s)
+    expect(reduce(s, { type: 'CLOSE' })).toMatchObject({ phase: 'idle', scope: 'word' })
+    expect(run([lock(1), back, explain, { type: 'CANCEL' }, lock(2), confirm])).toMatchObject({ phase: 'menu', scope: 'word' })
+  })
+})

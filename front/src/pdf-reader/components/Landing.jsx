@@ -72,7 +72,7 @@ export default function Landing({ dragging, notice, onChooseFile, onOpenUrl, onI
           <div className="notice-grid">
             <div>
               <h3>보안 및 프라이버시</h3>
-              <p>웹캠 영상과 문서는 이 기기 안에서 처리됩니다. 링크를 열 때는 해당 사이트에서 글을 받아 옵니다. 뜻과 해설을 찾기 위해 선택한 단어와 그 단어가 있는 줄만 서버로 전송됩니다.</p>
+              <p>웹캠 영상과 문서는 이 기기 안에서 처리됩니다. 링크를 열 때는 해당 사이트에서 글을 받아 옵니다. 뜻과 해설을 찾기 위해 선택한 단어와 그 단어가 있는 문장만 서버로 전송되며, 영어·외래어 단어는 번역을 위해 DeepL로도 전달됩니다.</p>
             </div>
             <div>
               <h3>저작권 규정</h3>

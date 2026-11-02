@@ -140,6 +140,9 @@ export class GestureTracker {
     phase: Phase,
     now: number,
     blocked = false,
+    // 엄지 기울이기를 막을지. 기울이는 동안 엄지 판정이 흔들려 손가락 개수가 바뀌는 것은 정상이라
+    // 흔들림 차단 대신 화면 끝·거리 조건만 넘겨받는다. 없으면 blocked 를 그대로 쓴다.
+    tiltBlocked = blocked,
   ): Intent | null {
     const entered = f.shape !== this.prevShape
     this.prevShape = f.shape
@@ -147,7 +150,7 @@ export class GestureTracker {
     this.palm = entered ? f.palmDeg : this.palm + (f.palmDeg - this.palm) * ANGLE_SMOOTH
     const held = this.stab.update(f.shape, now, blocked)
 
-    if (phase === 'adjusting' && f.shape === 'thumb' && !blocked) {
+    if (phase === 'adjusting' && f.shape === 'thumb' && !tiltBlocked) {
       if (Math.abs(this.thumb) < REARM_DEG) this.armed = true
       else if (this.armed && Math.abs(this.thumb) >= TILT_DEG) {
         this.armed = false
