@@ -150,11 +150,37 @@ body.dark button.dark:hover{background:#ece7da}
 body.dark .home-error{background:#3d2420;color:#f2c4bd}
 .drop-overlay{background:#faf5eae6}
 .modal-backdrop{background:#2b2a2773}
-.modal{width:min(600px,100%)}
-.modal-group{margin-top:14px}
-.modal-group h3{margin:0 0 2px;font-size:13px;font-weight:700;color:var(--brand-ink)}
-.modal dd{word-break:keep-all}
-.modal-head button{min-width:36px;min-height:36px}
+/* 도움말·기능 설명·출처. 글꼴은 --info-font 한 곳에서 바꾼다 (산돌구름 글꼴을 설치하면 맨 앞에 이름을 넣는다) */
+.modal{--info-font:"Noto Sans KR",system-ui,sans-serif;width:min(640px,100%);padding:24px 26px 26px;font-family:var(--info-font);letter-spacing:-.01em}
+.modal-head{margin-bottom:4px}
+.modal-head h2{font-size:22px;font-weight:700}
+.modal-head button{min-width:40px;min-height:40px}
+.modal-lead{margin:0 0 8px;color:var(--muted);font-size:15px;line-height:1.55;word-break:keep-all}
+.modal-group{margin-top:20px}
+.modal-group h3{margin:0 0 6px;font-size:13px;font-weight:700;color:var(--brand-ink)}
+.modal-group dl>div{display:grid;grid-template-columns:minmax(120px,38%) 1fr;gap:4px 16px;padding:9px 0;border-top:1px solid var(--line)}
+.modal-group dl>div:first-child{border-top:0}
+.modal-group dt{margin:0;color:var(--ink);font-size:15px;font-weight:700;line-height:1.5;word-break:keep-all}
+.modal-group dd{margin:0;color:var(--ink);opacity:.82;font-size:15px;line-height:1.5;word-break:keep-all}
+/* 도움말: 섹션을 눌러 펼친다 */
+.modal-fold{margin-top:8px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.modal-fold.open{border-color:color-mix(in srgb,var(--brand) 35%,var(--line))}
+.modal .modal-fold-head{display:flex;align-items:center;gap:8px;width:100%;min-height:52px;padding:0 14px 0 16px;border:0;border-radius:12px;background:transparent;color:var(--ink);font:inherit;font-size:16px;font-weight:700;text-align:left;cursor:pointer}
+.modal .modal-fold-head:hover{background:var(--hover)}
+.modal-fold-head span{flex:1}
+.modal-fold-head svg{flex:none;color:var(--muted);transition:transform .15s ease}
+.modal-fold.open .modal-fold-head svg{transform:rotate(90deg)}
+.modal-fold.open .modal-fold-head{border-radius:12px 12px 0 0}
+.modal-fold-body{padding:2px 16px 8px}
+.modal-fold-body dl>div{display:grid;grid-template-columns:minmax(120px,38%) 1fr;gap:4px 16px;padding:9px 0;border-top:1px solid var(--line)}
+.modal-fold-body dt{margin:0;color:var(--ink);font-size:15px;font-weight:700;line-height:1.5;word-break:keep-all}
+.modal-fold-body dd{margin:0;color:var(--ink);opacity:.82;font-size:15px;line-height:1.5;word-break:keep-all}
+@media (prefers-reduced-motion:reduce){.modal-fold-head svg{transition:none}}
+@media (max-width:520px){
+  .modal{padding:20px 18px 22px}
+  .modal-fold-body dl>div{grid-template-columns:1fr;gap:2px}
+  .modal-group dl>div{grid-template-columns:1fr;gap:2px}
+}
 body.dark button.primary,body.dark #openBtn{color:#1d1c1a}
 .word-popup .popup-tabs button.active{border-color:var(--brand);color:var(--brand-ink)}
 .epub-page ::selection{background:#8a5a2b40}
