@@ -17,9 +17,11 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
   const [pos, setPos] = useState({ left: 0, top: 0, width: 360 });
   const [copied, setCopied] = useState('idle'); // idle | done | fail
 
+  const sentence = selection?.scope === 'sentence'; // 문장 해설: 사전 조회 없이 해설만 보여 준다
+
   // 단어 조회
   useEffect(() => {
-    if (!selection) return;
+    if (!selection || sentence) return;
     let cancelled = false;
     setEntry(null);
     setAi(null);
@@ -27,15 +29,17 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
       .then((e) => !cancelled && setEntry(e))
       .catch(() => !cancelled && setEntry({ error: true }));
     return () => { cancelled = true; };
-  }, [selection]);
+  }, [selection, sentence]);
 
   // 문맥 해설·예문 (로컬 LLM). 느릴 수 있어 뜻과 따로, 필요할 때만 요청합니다.
-  const needAi = !!selection && !!entry && !entry.error && (tab === 'explain' || tab === 'search');
+  const needAi = !!selection && (sentence || (!!entry && !entry.error)) && (tab === 'explain' || tab === 'search');
   const aiRequested = useRef(null);
   useEffect(() => {
     if (!needAi || aiRequested.current === selection) return;
     aiRequested.current = selection;
-    explainWord({ surface: selection.word, lemma: entry.lemma, meaning: entry.meaning, context: selection.context })
+    explainWord(sentence
+      ? { surface: selection.word, context: selection.word }
+      : { surface: selection.word, lemma: entry.lemma, meaning: entry.meaning, context: selection.context })
       .then((r) => { if (aiRequested.current === selection) setAi(r); });
   }, [needAi, selection, entry]);
 
@@ -89,10 +93,16 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
     setTimeout(() => setCopied('idle'), 1200);
   };
   const searchWeb = () =>
-    window.open(`https://www.google.com/search?q=${encodeURIComponent(`"${word}" 뜻 예문`)}`, '_blank', 'noopener');
+    window.open(`https://www.google.com/search?q=${encodeURIComponent(sentence ? word : `"${word}" 뜻 예문`)}`, '_blank', 'noopener');
 
   let body;
-  if (!tab) {
+  if (sentence) {
+    body = !ai
+      ? <p className="popup-loading">문장 해설을 준비하는 중…</p>
+      : ai.explanation
+        ? <p className="example">“{ai.explanation}”</p>
+        : '문장 해설은 로컬 LLM 연동 후 제공됩니다.';
+  } else if (!tab) {
     body = <p className="popup-loading">{isPhone() ? '위에서 볼 내용을 고르세요.' : '손가락 1·2·3으로 메뉴를 고르세요. 주먹으로 취소합니다.'}</p>;
   } else if (!entry) {
     body = <p className="popup-loading">뜻과 예문을 찾는 중…</p>;
@@ -124,9 +134,9 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
     >
       <div className="popup-head">
         <div>
-          <div className="popup-word">{word}</div>
+          <div className={sentence ? 'popup-sentence' : 'popup-word'}>{word}</div>
           <div className="popup-meta">
-            {entry && !entry.error
+            {sentence ? '문장 해설' : entry && !entry.error
               ? [entry.part, entry.lemma && entry.lemma !== word ? `원형: ${entry.lemma}` : ''].filter(Boolean).join(' · ')
               : ''}
           </div>
@@ -134,20 +144,20 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
         <button className="popup-close" aria-label="닫기" onClick={onClose}>✕</button>
       </div>
 
-      <div className="popup-tabs">
+      {!sentence && <div className="popup-tabs">
         {TABS.map((t) => (
           <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => onChoice(t.id)} title={`${t.label} (${t.key}번 키)`}>
             {t.key} {t.label}
           </button>
         ))}
-      </div>
+      </div>}
 
       <div className="popup-content">{body}</div>
 
       <div className="popup-actions">
         <button onClick={searchWeb}>검색어 복사/검색 ↗</button>
         <button onClick={copyWord}>
-          {copied === 'done' ? '복사됨 ✓' : copied === 'fail' ? '복사 권한 없음' : '단어 복사'}
+          {copied === 'done' ? '복사됨 ✓' : copied === 'fail' ? '복사 권한 없음' : sentence ? '문장 복사' : '단어 복사'}
         </button>
       </div>
     </div>

@@ -11,6 +11,8 @@ export interface State {
   target: Target | null
   wordId: string | null
   choice: MenuChoice | null
+  // 결과가 단어에 대한 것인지 문장 전체에 대한 것인지. 문장이면 해설만 보여 준다
+  scope: 'word' | 'sentence'
   gazeParagraphId: string | null
 }
 
@@ -19,6 +21,7 @@ export const initialState: State = {
   target: null,
   wordId: null,
   choice: null,
+  scope: 'word',
   gazeParagraphId: null,
 }
 
@@ -47,7 +50,7 @@ function moveSentence({ words, index }: Target, direction: -1 | 1): number {
 export function reduce(state: State, ev: InputEvent): State {
   switch (ev.type) {
     case 'WORD_POINTED':
-      return { ...state, phase: 'menu', target: null, wordId: ev.wordId, choice: null }
+      return { ...state, phase: 'menu', target: null, wordId: ev.wordId, choice: null, scope: 'word' }
     case 'TARGET_LOCKED':
       if (state.phase !== 'idle' || !ev.words[ev.index]) return state
       return { ...state, phase: 'adjusting', target: { words: ev.words, index: ev.index, level: 'word' } }
@@ -67,14 +70,18 @@ export function reduce(state: State, ev: InputEvent): State {
       if (state.phase !== 'adjusting' || !state.target) return state
       // 문장을 고른 뒤에는 그 문장의 단어 조정으로 돌아가고, 단어를 고르면 메뉴로 간다.
       if (state.target.level === 'sentence') return { ...state, target: { ...state.target, level: 'word' } }
-      return { ...state, phase: 'menu', wordId: candidateId(state), target: null, choice: null }
+      return { ...state, phase: 'menu', wordId: candidateId(state), target: null, choice: null, scope: 'word' }
+    case 'SENTENCE_EXPLAIN':
+      if (state.phase !== 'adjusting' || state.target?.level !== 'sentence') return state
+      return { ...state, phase: 'result', wordId: candidateId(state), target: null, choice: 'explain', scope: 'sentence' }
     // 결과 화면에서도 1/2/3으로 탭을 바꿀 수 있다.
     case 'MENU_SELECTED':
+      if (state.scope === 'sentence' && ev.choice !== 'explain') return state // 문장에는 해설만 있다
       return state.phase === 'menu' || state.phase === 'result' ? { ...state, phase: 'result', choice: ev.choice } : state
     case 'CLOSE':
-      return state.phase === 'result' ? { ...state, phase: 'idle', wordId: null, choice: null } : state
+      return state.phase === 'result' ? { ...state, phase: 'idle', wordId: null, choice: null, scope: 'word' } : state
     case 'CANCEL':
-      return { ...state, phase: 'idle', target: null, wordId: null, choice: null }
+      return { ...state, phase: 'idle', target: null, wordId: null, choice: null, scope: 'word' }
     case 'GAZE_PARAGRAPH':
       return { ...state, gazeParagraphId: ev.paragraphId }
   }

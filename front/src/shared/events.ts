@@ -13,6 +13,7 @@ export type InputEvent =
   | { type: 'TARGET_MOVED'; direction: -1 | 1 } // -1: 앞(이전), 1: 뒤(다음)
   | { type: 'TARGET_BACK' } // 단어 조정 → 문장 조정
   | { type: 'TARGET_CONFIRMED' }
+  | { type: 'SENTENCE_EXPLAIN' } // 문장 조정 중 그 문장의 해설을 바로 본다
   | { type: 'CLOSE' }
   | { type: 'MENU_SELECTED'; choice: MenuChoice }
   | { type: 'CANCEL' }

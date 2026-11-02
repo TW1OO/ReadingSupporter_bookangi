@@ -183,6 +183,7 @@ body.dark .home-error{background:#3d2420;color:#f2c4bd}
 }
 body.dark button.primary,body.dark #openBtn{color:#1d1c1a}
 .word-popup .popup-tabs button.active{border-color:var(--brand);color:var(--brand-ink)}
+.popup-sentence{font-size:15px;line-height:1.6;font-weight:600;color:var(--ink);word-break:keep-all}
 .epub-page ::selection{background:#8a5a2b40}
 .logo svg{width:22px;height:22px}
 
