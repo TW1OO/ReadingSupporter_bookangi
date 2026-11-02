@@ -4,8 +4,8 @@ import { initialState, reduce } from '@/modules/state/machine';
 import { startHandInput } from '@/modules/hand';
 import { CalibrationOverlay, GazeHeatLayer, READING_HEATMAP, toInputEvent, useGaze } from '@/modules/gaze';
 import Header from './components/Header.jsx';
-import { CameraPeek, FaceGuideCard, FaceToast, ReaderHeader, ReaderPager, ReaderPanel, StatusPill } from './components/ReaderChrome.jsx';
-import { ChevronRight } from './components/icons.jsx';
+import { CameraPeek, FaceGuideCard, FaceToast, ReaderHeader, ReaderPager, ReaderPanel, StatusPill, TouchAdjustBar } from './components/ReaderChrome.jsx';
+import { ChevronLeft, ChevronRight } from './components/icons.jsx';
 import SearchBar from './components/SearchBar.jsx';
 import PdfViewer from './components/PdfViewer.jsx';
 import ArticleViewer from './components/ArticleViewer.jsx';
@@ -16,16 +16,19 @@ import InfoModal from './components/InfoModal.jsx';
 import { SCALE, clamp, isPdfFile, openPdf, fetchRemoteFile } from './lib/pdf.js';
 import { fetchArticle, looksLikePdf } from './lib/webArticle.js';
 import { averageX, gazeEdge } from './lib/gazeEdge.js';
+import { isPhone } from './lib/device.js';
+import { pageFitScale } from './lib/pageFit.js';
+import { swipeDirection } from './lib/swipe.js';
 import { usePdfSearch } from './hooks/usePdfSearch.js';
 import { useArticleSearch } from './hooks/useArticleSearch.js';
 import { useFileDrop } from './hooks/useFileDrop.js';
 
 const HAND_READY = '손 인식 중 · 엄지를 들어 단어 지정';
 const NO_TEXT = '이 쪽에는 고를 글자가 없습니다. 이미지·스캔으로 된 내용은 아직 고를 수 없어요.';
+const FIT_SLACK_Y = 20; // 쪽 맞춤 때 세로 스크롤 막대가 생기지 않게 남기는 여유
 const DWELL_KEY = 'bookangi.dwellLock';
 const MOUSE_KEY = 'bookangi.mousePick';
 const CHIP_MS = 1500;
-const FIT_PADDING = { x: 80, y: 176 };
 const DWELL_MS = 1000; // 시선이 이만큼 머물면 문장 지정
 const GAZE_WINDOW_MS = 500; // 엄지를 들 때 이 시간의 시선 평균을 쓴다
 const RELOCK_MS = 2000; // 닫은 직후에는 시선 멈춤으로 다시 지정하지 않는다
@@ -65,6 +68,7 @@ export default function PdfReaderApp() {
   const [dark, setDark] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [headerOpen, setHeaderOpen] = useState(false);
+  const [headerPinned, setHeaderPinned] = useState(false); // 탭으로 연 머리글. 호버가 없으니 바깥을 눌러 닫는다
   const [menuOpen, setMenuOpen] = useState(false);
   const [peek, setPeek] = useState(false); // 카메라 화면 잠깐 보기
   const [chip, setChip] = useState(''); // 제스처 결과를 잠깐 알려 준다
@@ -138,7 +142,7 @@ export default function PdfReaderApp() {
   const phaseRef = useRef(input.phase);
   phaseRef.current = input.phase;
   const live = useRef({});
-  live.current = { dwellEnabled, calibrating };
+  live.current = { dwellEnabled, calibrating, gazeOn };
   const relockAt = useRef(0);
   const gazeTrail = useRef([]);
   const [edge, setEdge] = useState(null); // 시선이 머무는 화면 끝
@@ -236,6 +240,17 @@ export default function PdfReaderApp() {
       setFlowNotice('시선 인식을 시작하지 못했습니다. 손 인식과 마우스는 그대로 쓸 수 있습니다.');
     }
   };
+  // 패드를 돌리면 카메라와 화면의 위치 관계가 바뀌어 보정이 맞지 않는다. 다시 보정하도록 안내한다.
+  const startCalibrationRef = useRef(startCalibration);
+  startCalibrationRef.current = startCalibration;
+  useEffect(() => {
+    const onRotate = () => {
+      const { gazeOn: on, calibrating: busy } = live.current;
+      if (on && !busy) startCalibrationRef.current();
+    };
+    window.addEventListener('orientationchange', onRotate);
+    return () => window.removeEventListener('orientationchange', onRotate);
+  }, []);
   // 손 모듈과 보정 화면은 서로 모르므로 앱이 제스처를 전달한다
   const calibrationListeners = useRef(new Set());
   const subscribeGesture = useCallback((listener) => {
@@ -246,7 +261,8 @@ export default function PdfReaderApp() {
   const wasInViewer = useRef(false);
   useEffect(() => {
     // 손은 시선 다음에 켠다. MediaPipe 모델 두 개를 동시에 불러오면 서로 충돌할 수 있다.
-    if (hasDoc && !wasInViewer.current) {
+    // 휴대폰은 터치로 읽는다. 시선 오차가 화면 폭의 4분의 1이나 되므로 카메라를 자동으로 켜지 않는다.
+    if (hasDoc && !wasInViewer.current && !isPhone()) {
       (gazeOn ? Promise.resolve() : startCalibration()).then(() => {
         if (wasInViewer.current) setHandEnabled(true);
       });
@@ -390,20 +406,67 @@ export default function PdfReaderApp() {
     goToPage(next);
     setChip(label);
   };
+  // 읽는 중 좌우로 밀면 쪽을 넘긴다. 확대한 PDF 의 가로 스크롤과 글자 선택은 방해하지 않는다.
+  const swipeStart = useRef(null);
+  const onSwipeStart = (e) => {
+    const t = e.touches[0];
+    swipeStart.current = e.touches.length === 1 ? { x: t.clientX, y: t.clientY, at: performance.now() } : null;
+  };
+  const onSwipeEnd = (e) => {
+    const s = swipeStart.current;
+    swipeStart.current = null;
+    const t = e.changedTouches[0];
+    const stage = stageRef.current;
+    if (!s || !t || input.phase !== 'idle' || (stage && stage.scrollWidth > stage.clientWidth)) return;
+    if (!(window.getSelection()?.isCollapsed ?? true)) return;
+    const d = swipeDirection(t.clientX - s.x, t.clientY - s.y, performance.now() - s.at);
+    if (d) turnPage.current(d, d > 0 ? '다음 페이지' : '이전 페이지');
+  };
   useEffect(() => {
     if (!chip) return undefined;
     const id = setTimeout(() => setChip(''), CHIP_MS);
     return () => clearTimeout(id);
   }, [chip]);
-  const zoom = (delta) => setScale((s) => clamp(s + delta, SCALE.min, SCALE.max));
-  // 쪽 전체가 화면에 들어오게 맞춘다. PDF 를 처음 열 때도 쓴다.
+  const autoFit = useRef(true); // 직접 확대·축소하기 전까지는 화면 크기가 바뀌면 다시 맞춘다
+  const zoom = (delta) => {
+    autoFit.current = false;
+    setScale((s) => clamp(s + delta, SCALE.min, SCALE.max));
+  };
+  // 쪽 전체가 화면에 들어오게 맞춘다. PDF 를 처음 열 때도 쓴다. 여백은 화면 크기별 CSS 값을 읽는다.
   const fitPage = async () => {
     if (!pdfDoc || !stageRef.current) return;
+    autoFit.current = true;
     const p = await pdfDoc.getPage(page);
     const vp = p.getViewport({ scale: 1, rotation });
+    if (!stageRef.current) return;
     const { clientWidth: w, clientHeight: h } = stageRef.current;
-    setScale(clamp(Math.min((w - FIT_PADDING.x) / vp.width, (h - FIT_PADDING.y) / vp.height), SCALE.min, SCALE.fitMax));
+    const cs = getComputedStyle(stageRef.current);
+    const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + FIT_SLACK_Y;
+    // 휴대폰 가로 화면은 높이가 낮아 쪽 전체를 맞추면 글자를 읽을 수 없다. 터치로 스크롤하므로 너비에 맞춘다.
+    const widthOnly = isPhone() && w > h;
+    setScale(clamp(pageFitScale({ stageW: w, stageH: h, padX, padY, pageW: vp.width, pageH: vp.height, widthOnly }), SCALE.min, SCALE.fitMax));
   };
+  const fitPageRef = useRef(fitPage);
+  fitPageRef.current = fitPage;
+  // 쪽을 넘기면 맨 위부터 읽는다. 쪽마다 크기가 다를 수 있고 회전하면 비율이 바뀌니 다시 맞춘다.
+  useEffect(() => {
+    if (!pdfDoc) return;
+    stageRef.current?.scrollTo(0, 0);
+    if (autoFit.current) fitPageRef.current();
+  }, [page, rotation, pdfDoc]);
+  useEffect(() => {
+    let timer = 0;
+    const onResize = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { if (autoFit.current) fitPageRef.current(); }, 150);
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', onResize);
+    };
+  }, []);
   const needsFit = useRef(false);
   useEffect(() => {
     if (!pdfDoc || !needsFit.current) return;
@@ -469,6 +532,7 @@ export default function PdfReaderApp() {
     setPanelOpen(false);
     setMenuOpen(false);
     setHeaderOpen(false);
+    setHeaderPinned(false);
   };
   const faceLost = gazeOn && !calibrating && !gaze.faceDetected;
   useEffect(() => {
@@ -515,7 +579,7 @@ export default function PdfReaderApp() {
   return (
     <>
       <div className={`rd-reader${pdfDoc ? ' is-pdf' : ''}`}>
-        <div className="rd-stage">
+        <div className="rd-stage" onTouchStart={onSwipeStart} onTouchEnd={onSwipeEnd}>
           {article ? (
             <ArticleViewer
               ref={viewerRef}
@@ -549,8 +613,15 @@ export default function PdfReaderApp() {
           )}
         </div>
 
-        <button className="rd-handle" onClick={() => setHeaderOpen((v) => !v)} onMouseEnter={() => setHeaderOpen(true)} aria-label="메뉴 보기" />
-        <button className="rd-open-panel" onClick={() => setPanelOpen(true)} aria-label="읽기 도구 열기"><ChevronRight /></button>
+        <button
+          className="rd-handle"
+          onClick={() => { setHeaderOpen(true); setHeaderPinned(true); }}
+          onPointerEnter={(e) => { if (e.pointerType === 'mouse') setHeaderOpen(true); }}
+          aria-label="메뉴 보기"
+        />
+        <button className="rd-open-panel" onClick={() => setPanelOpen((v) => !v)} aria-label={panelOpen ? '읽기 도구 닫기' : '읽기 도구 열기'} aria-expanded={panelOpen}>
+          {panelOpen ? <ChevronLeft /> : <ChevronRight />}
+        </button>
         <StatusPill gazeState={gazeDot} handState={handDot} chip={chip} warn={faceLost} onClick={() => setPanelOpen(true)} />
         {faceLost && <FaceToast />}
         {faceLost && !faceCardClosed && !peek && <FaceGuideCard onClose={() => setFaceCardClosed(true)} />}
@@ -559,6 +630,15 @@ export default function PdfReaderApp() {
         {peek && <CameraPeek getStream={() => (handEnabled ? videoRef.current?.srcObject : gaze.controller.getStream())} onClose={() => setPeek(false)} />}
 
         <div className="rd-search"><SearchBar search={search} placeholder={article ? '이 글에서 검색...' : 'PDF에서 검색...'} /></div>
+        {input.phase === 'adjusting' && (
+          <TouchAdjustBar
+            level={input.target?.level ?? 'word'}
+            onMove={(direction) => dispatch({ type: 'TARGET_MOVED', direction })}
+            onBack={() => dispatch({ type: 'TARGET_BACK' })}
+            onConfirm={() => dispatch({ type: 'TARGET_CONFIRMED' })}
+            onCancel={closePopup}
+          />
+        )}
         <ReaderPager
           page={page}
           totalPages={totalPages}
@@ -574,18 +654,18 @@ export default function PdfReaderApp() {
           } : null}
         />
 
-        {(panelOpen || menuOpen) && <div className="rd-veil" onClick={closeChrome} />}
+        {(panelOpen || menuOpen || (headerOpen && headerPinned)) && <div className="rd-veil" onClick={closeChrome} />}
         <ReaderHeader
           open={headerOpen || panelOpen || menuOpen}
           title={fileName}
           dark={dark}
-          onHide={() => { if (!menuOpen && !panelOpen) setHeaderOpen(false); }}
+          onHide={() => { if (!menuOpen && !panelOpen && !headerPinned) setHeaderOpen(false); }}
           onOpenFile={chooseFile}
           onToggleTheme={() => setDark((v) => !v)}
           menuOpen={menuOpen}
           onMenuToggle={() => setMenuOpen((v) => !v)}
           menu={{
-            onHome: goHome,
+            onHome: () => { closeChrome(); goHome(); },
             onInfo: (k) => { setMenuOpen(false); setInfo(k); },
             onDownload: pdfDoc ? download : null,
             onPrint: pdfDoc ? print : null,
@@ -595,6 +675,7 @@ export default function PdfReaderApp() {
         <ReaderPanel
           open={panelOpen}
           onClose={() => setPanelOpen(false)}
+          onHome={() => { closeChrome(); goHome(); }}
           handDebugRef={handDebugRef}
           page={page}
           total={totalPages}
@@ -628,7 +709,7 @@ export default function PdfReaderApp() {
       {gazeOn && !calibrating && <GazeHeatLayer controller={gaze.controller} options={READING_HEATMAP} />}
       {hasDoc && gazeOn && !calibrating && input.phase === 'idle' && edge && <div className={`edge-glow ${edge}`} aria-hidden="true" />}
       {(input.phase === 'adjusting' || input.phase === 'result' || flowNotice) && (
-        <div className="flow-guide" role="status">
+        <div className={`flow-guide${input.phase === 'idle' ? '' : ' is-gesture'}`} role="status">
           {input.phase === 'result' ? GUIDE.result : input.phase === 'adjusting' ? GUIDE[input.target?.level ?? 'word'] : flowNotice}
         </div>
       )}

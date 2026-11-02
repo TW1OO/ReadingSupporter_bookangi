@@ -154,3 +154,128 @@ body.dark button.primary,body.dark #openBtn{color:#1d1c1a}
 .word-popup .popup-tabs button.active{border-color:var(--brand);color:var(--brand-ink)}
 .epub-page ::selection{background:#8a5a2b40}
 .logo svg{width:22px;height:22px}
+
+/* ───────── 화면 공통: 주소창과 노치를 피한다 ───────── */
+body,#root{height:100dvh}
+.rd-pager{bottom:calc(28px + env(safe-area-inset-bottom))}
+.rd-more-btn{display:none!important}
+.rd-pager-extra{display:contents}
+
+/* ───────── 패드 ───────── */
+.rd-adjust{display:none}
+@media (min-width:768px) and (max-width:1279px){
+  .article-paper{padding:64px 32px 104px}
+  .article-flow{font-size:20px;line-height:34px}
+  .block-title{font-size:32px}
+  .block-heading{font-size:23px}
+  .rd-reader.is-pdf #stage{padding:56px 16px 96px}
+}
+@media (min-width:768px) and (max-width:1279px) and (orientation:portrait){
+  .article-paper{padding:72px 56px 112px}
+  .article-flow{font-size:22px;line-height:38px}
+  .block-title{font-size:34px}
+}
+/* 터치 기기: 호버가 없고 손가락으로 누른다 */
+@media (pointer:coarse){
+  .rd-handle{width:160px;height:44px}
+  .rd-handle::after{left:60px}
+  .rd-reader .rd-icon,.rd-open-panel{width:44px;height:44px}
+  .rd-reader .rd-ghost{height:44px}
+  .rd-reader .rd-pill{height:44px}
+  .rd-reader .rd-btn.outline{height:44px}
+  .rd-reader .rd-menu button{padding:13px 10px}
+  .rd-reader .rd-link{padding:8px 0}
+  .rd-toggle{padding:13px 0}
+  .rd-toggle input{width:22px;height:22px}
+  .rd-reader .rd-camera-close{width:36px;height:36px}
+  input,textarea,select{font-size:16px} /* iOS 는 16px 보다 작은 입력창을 누르면 화면을 확대한다 */
+  .rd-page-no{font-size:16px}
+  .rd-pager{height:60px;border-radius:30px;bottom:calc(20px + env(safe-area-inset-bottom))}
+  .rd-reader #searchBar button{width:44px;height:44px}
+  .rd-reader .rd-thumbs .thumb{padding:8px}
+  .word-popup .popup-close{min-width:44px;min-height:44px}
+  .word-popup .popup-tabs button{min-height:44px}
+  .word-popup .popup-actions button,.word-popup .popup-actions a{min-height:44px;display:inline-flex;align-items:center}
+  .rd-reader .rd-icon:hover:not(:disabled),.rd-reader .rd-open-panel:hover,.rd-reader .rd-ghost:hover,.rd-reader .rd-menu button:hover{background:transparent}
+  .rd-adjust{position:fixed;left:50%;bottom:92px;z-index:31;transform:translateX(-50%);display:flex;flex-wrap:wrap;justify-content:center;gap:6px;width:max-content;max-width:calc(100vw - 24px);padding:8px;border:1px solid var(--rd-line);border-radius:18px;background:var(--rd-surface);box-shadow:0 6px 24px #2a22121a}
+  .rd-reader .rd-adjust button{display:inline-flex;align-items:center;gap:4px;min-height:48px;padding:0 14px;border-radius:12px;font-size:14px;background:var(--rd-soft);cursor:pointer}
+  .rd-reader .rd-adjust button.primary{background:var(--rd-accent);color:var(--rd-surface);font-weight:700}
+  .rd-adjust{bottom:calc(92px + env(safe-area-inset-bottom))}
+  .flow-guide{bottom:calc(172px + env(safe-area-inset-bottom))}
+}
+
+/* ───────── 뜻 시트와 단어 조정 ───────── */
+.word-sheet-backdrop{display:none}
+.rd-adjust i{font-style:normal}
+@media (pointer:coarse) and (max-width:767px),(pointer:coarse) and (max-height:500px){
+  /* 제스처를 쓰지 않으므로 제스처 안내를 숨기고, 조정 중에는 쪽 이동 막대 자리에 단추를 둔다 */
+  .flow-guide.is-gesture{display:none}
+  .rd-reader:has(.rd-adjust) .rd-pager{display:none}
+  .rd-adjust{bottom:calc(10px + env(safe-area-inset-bottom));display:grid;grid-auto-flow:column;grid-auto-columns:1fr;width:calc(100vw - 16px);max-width:520px;padding:6px;gap:4px}
+  .rd-reader .rd-adjust button{justify-content:center;gap:2px;padding:0 2px;font-size:13px;white-space:nowrap}
+  .rd-adjust i{display:none}
+  .word-sheet-backdrop{display:block;position:fixed;inset:0;z-index:999;background:#2b2a2740}
+  .word-popup{left:0!important;top:auto!important;right:0;bottom:0;width:auto!important;max-width:560px;margin-inline:auto;max-height:60dvh;padding:22px 16px calc(16px + env(safe-area-inset-bottom));border:0;border-top:1px solid var(--line);border-radius:18px 18px 0 0;background:var(--panel);color:var(--ink);box-shadow:0 -10px 40px #2a221233}
+  .word-popup::before{content:"";position:absolute;left:50%;top:8px;width:40px;height:4px;margin-left:-20px;border-radius:2px;background:var(--line)}
+  .word-popup .popup-word{color:var(--ink)}
+  .word-popup .popup-tabs{display:grid;grid-template-columns:repeat(3,1fr)}
+  .word-popup .popup-tabs button{padding:6px 4px;font-size:13px;word-break:keep-all}
+  .word-popup .popup-actions button{flex:1}
+}
+@media (pointer:coarse) and (max-height:500px){
+  .word-popup{max-height:82dvh}
+}
+
+/* ───────── 휴대폰 머리글: 호버가 없으니 작은 막대로 늘 보여 준다 ───────── */
+.rd-panel-home{display:none}
+@media (pointer:coarse) and (max-width:767px),(pointer:coarse) and (max-height:500px){
+  .rd-panel{padding-top:60px}
+  .rd-reader .rd-panel-close{display:none}
+  .rd-reader .rd-panel-home{display:inline-flex;align-items:center;justify-content:center;min-width:52px;height:44px;padding:0 12px;border-radius:10px;color:var(--brand-ink);font-size:14px;font-weight:500;cursor:pointer}
+  .rd-reader .rd-panel-home,.rd-reader .rd-panel-home:hover{background:color-mix(in srgb,var(--rd-surface) 60%,var(--rd-soft))}
+  .rd-handle{display:none}
+  .rd-header{height:48px;padding:0 4px 0 48px;transform:none}
+  .rd-open-panel{z-index:51;left:max(2px,env(safe-area-inset-left));top:2px}
+  /* 읽다가 제목을 눌러 홈으로 나가지 않게 한다. 홈은 ⋮ 메뉴에 있다 */
+  .rd-reader .rd-brand{pointer-events:none}
+  .rd-logo,.rd-brand b{display:none}
+  .rd-doc-title{max-width:none;font-size:14px}
+  .rd-reader .rd-ghost{width:44px;padding:0;justify-content:center;font-size:0}
+  .rd-header-actions{gap:0}
+  .rd-menu{right:8px;top:48px}
+  /* 머리글 아래로 쪽 넘김 알림만 띄운다. 카메라를 쓰지 않으니 상태 표시는 숨긴다 */
+  .rd-status{top:54px;right:8px}
+  .rd-reader .rd-pill{display:none}
+}
+
+/* ───────── 홈: QR 로 들어온 관람객이 바로 누르도록 시연 자료를 맨 위에 둔다 ───────── */
+@media (max-width:767px),(pointer:coarse) and (max-height:500px){
+  .home-card{display:flex;flex-direction:column}
+  .home-card .sample-row{order:-1;flex-direction:column;align-items:stretch;gap:8px;margin:0 0 18px;padding:0;border-top:0;text-align:center}
+  .home-card .sample-row button{min-height:48px;background:var(--brand);border-color:var(--brand);color:var(--panel);font-weight:700}
+}
+
+/* ───────── 휴대폰 세로 ───────── */
+@media (max-width:767px){
+  .article-paper{padding:60px 20px 100px}
+  .article-flow{font-size:18px;line-height:30px}
+  .article-block{margin-bottom:16px}
+  .block-title{font-size:26px}
+  .block-heading{margin:22px 0 10px;font-size:21px}
+  .article-source{margin-bottom:20px;font-size:12px}
+  .block-code{font-size:14px;line-height:22px}
+  .rd-more-btn{display:inline-grid!important}
+  .rd-pager{padding:0 8px}
+  .rd-reader.is-pdf #stage{padding:60px 8px 100px}
+  .rd-pager-extra{display:none;position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);align-items:center;justify-content:center;flex-wrap:wrap;gap:2px;width:max-content;max-width:calc(100vw - 24px);padding:6px 8px;border:1px solid var(--rd-line);border-radius:18px;background:var(--rd-surface);box-shadow:0 6px 24px #2a22121a}
+  .rd-pager-extra.open{display:flex}
+  .rd-pager-extra .rd-sep{display:none}
+}
+/* ───────── 휴대폰 가로: 세로 공간이 적다 ───────── */
+@media (max-height:500px){
+  .article-paper{padding:48px 56px 72px}
+  .rd-reader.is-pdf #stage{padding:48px 22px 68px}
+  .article-flow{font-size:18px;line-height:30px}
+  .block-title{font-size:26px}
+  .rd-pager{height:48px;bottom:calc(8px + env(safe-area-inset-bottom))}
+}

@@ -3,6 +3,7 @@ import { pdfjsLib } from '../lib/pdf.js';
 import { cleanSelection } from '../lib/text.js';
 import { layoutTextItem } from '../lib/textLayout.js';
 import { buildWords, isNewBlock, nearestWordIndex, sentenceText } from '../lib/pdfWords.js';
+import { usePointerTap } from '../hooks/usePointerTap.js';
 
 /**
  * 캔버스 + 텍스트 레이어.
@@ -200,6 +201,7 @@ const PdfViewer = forwardRef(function PdfViewer(
       cb.current.onSelectText?.({ word, context: el.textContent, rect: { left: rect.left, top: rect.top, bottom: rect.bottom } });
     }, 180);
   };
+  const tap = usePointerTap(handleSelection);
 
   return (
     <section id="stage" ref={stageRef}>
@@ -224,8 +226,7 @@ const PdfViewer = forwardRef(function PdfViewer(
         <div
           id="textLayer" ref={textLayerRef}
           style={{ width: size.width, height: size.height }}
-          onMouseUp={(e) => handleSelection({ x: e.clientX, y: e.clientY })}
-          onTouchEnd={() => handleSelection()}
+          {...tap}
           onKeyUp={(e) => (e.key === 'Shift' || e.key.startsWith('Arrow')) && handleSelection()}
         >
           {items.map((it) => (

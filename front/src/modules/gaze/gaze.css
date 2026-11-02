@@ -105,14 +105,19 @@
 /* 읽기 화면용 시선 보정 안내 */
 .gz-scrim--soft { background: rgba(42, 38, 30, 0.42); }
 .gz-setup {
-  width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto;
+  width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow: auto;
   padding: 28px; background: #fff; color: #26241f; border-radius: 22px;
   box-shadow: 0 24px 70px rgba(30, 25, 15, 0.28); font-family: 'Noto Sans KR', system-ui, sans-serif;
 }
-.gz-setup small { color: #2f6bd0; font-size: 12px; font-weight: 700; }
+.gz-setup small { color: #8a5a2b; font-size: 12px; font-weight: 700; }
 .gz-setup h2 { margin: 4px 0 16px; font-size: 21px; font-weight: 700; }
 .gz-setup p { margin: 0 0 18px; color: #66625a; font-size: 13px; line-height: 1.6; word-break: keep-all; }
-.gz-setup-view { position: relative; aspect-ratio: 504 / 270; overflow: hidden; border-radius: 14px; background: #1c2029; }
+/* 카메라 비율을 그대로 보여 줘야 손 위치 상자가 실제 판정 영역과 맞는다. 세로 카메라는 화면 높이에 맞춰 줄인다. */
+.gz-setup-view {
+  position: relative; aspect-ratio: var(--gz-ar, 1.778); width: min(100%, calc(44vh * var(--gz-ar, 1.778))); margin-inline: auto;
+  overflow: hidden; border-radius: 14px; background: #1c2029;
+}
+.gz-setup-view--portrait .gz-face-oval { top: 16%; width: 56%; height: auto; aspect-ratio: 3 / 4; }
 .gz-setup-view video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
 .gz-face-chip {
   position: absolute; left: 12px; top: 12px; display: inline-flex; align-items: center; gap: 6px;
