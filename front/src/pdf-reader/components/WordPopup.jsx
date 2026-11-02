@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { explainWord, lookupWord } from '../lib/dictionary.js';
+import { isPhone } from '../lib/device.js';
 
 const TABS = [
   { id: 'meaning', label: '단어 뜻 해석', key: '1' },
@@ -92,7 +93,7 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
 
   let body;
   if (!tab) {
-    body = <p className="popup-loading">손가락 1·2·3으로 메뉴를 고르세요. 주먹으로 취소합니다.</p>;
+    body = <p className="popup-loading">{isPhone() ? '위에서 볼 내용을 고르세요.' : '손가락 1·2·3으로 메뉴를 고르세요. 주먹으로 취소합니다.'}</p>;
   } else if (!entry) {
     body = <p className="popup-loading">뜻과 예문을 찾는 중…</p>;
   } else if (entry.error) {
@@ -114,6 +115,9 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
   }
 
   return (
+    <>
+    {/* 휴대폰 시트의 바깥을 누르면 닫는다. 글자로 전달되어 새 단어가 잡히지 않게 막는다 (styles.css) */}
+    <div className="word-sheet-backdrop" onClick={onClose} aria-hidden="true" />
     <div
       ref={ref} className="word-popup" role="dialog" aria-label="선택 단어 정보"
       style={{ left: pos.left, top: pos.top, width: pos.width }}
@@ -147,5 +151,6 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
         </button>
       </div>
     </div>
+    </>
   );
 }

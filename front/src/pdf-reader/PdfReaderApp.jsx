@@ -5,7 +5,7 @@ import { startHandInput } from '@/modules/hand';
 import { CalibrationOverlay, GazeHeatLayer, READING_HEATMAP, toInputEvent, useGaze } from '@/modules/gaze';
 import Header from './components/Header.jsx';
 import { CameraPeek, FaceGuideCard, FaceToast, ReaderHeader, ReaderPager, ReaderPanel, StatusPill, TouchAdjustBar } from './components/ReaderChrome.jsx';
-import { ChevronRight } from './components/icons.jsx';
+import { ChevronLeft, ChevronRight } from './components/icons.jsx';
 import SearchBar from './components/SearchBar.jsx';
 import PdfViewer from './components/PdfViewer.jsx';
 import ArticleViewer from './components/ArticleViewer.jsx';
@@ -18,6 +18,7 @@ import { fetchArticle, looksLikePdf } from './lib/webArticle.js';
 import { averageX, gazeEdge } from './lib/gazeEdge.js';
 import { isPhone } from './lib/device.js';
 import { pageFitScale } from './lib/pageFit.js';
+import { swipeDirection } from './lib/swipe.js';
 import { usePdfSearch } from './hooks/usePdfSearch.js';
 import { useArticleSearch } from './hooks/useArticleSearch.js';
 import { useFileDrop } from './hooks/useFileDrop.js';
@@ -405,6 +406,22 @@ export default function PdfReaderApp() {
     goToPage(next);
     setChip(label);
   };
+  // 읽는 중 좌우로 밀면 쪽을 넘긴다. 확대한 PDF 의 가로 스크롤과 글자 선택은 방해하지 않는다.
+  const swipeStart = useRef(null);
+  const onSwipeStart = (e) => {
+    const t = e.touches[0];
+    swipeStart.current = e.touches.length === 1 ? { x: t.clientX, y: t.clientY, at: performance.now() } : null;
+  };
+  const onSwipeEnd = (e) => {
+    const s = swipeStart.current;
+    swipeStart.current = null;
+    const t = e.changedTouches[0];
+    const stage = stageRef.current;
+    if (!s || !t || input.phase !== 'idle' || (stage && stage.scrollWidth > stage.clientWidth)) return;
+    if (!(window.getSelection()?.isCollapsed ?? true)) return;
+    const d = swipeDirection(t.clientX - s.x, t.clientY - s.y, performance.now() - s.at);
+    if (d) turnPage.current(d, d > 0 ? '다음 페이지' : '이전 페이지');
+  };
   useEffect(() => {
     if (!chip) return undefined;
     const id = setTimeout(() => setChip(''), CHIP_MS);
@@ -562,7 +579,7 @@ export default function PdfReaderApp() {
   return (
     <>
       <div className={`rd-reader${pdfDoc ? ' is-pdf' : ''}`}>
-        <div className="rd-stage">
+        <div className="rd-stage" onTouchStart={onSwipeStart} onTouchEnd={onSwipeEnd}>
           {article ? (
             <ArticleViewer
               ref={viewerRef}
@@ -602,7 +619,9 @@ export default function PdfReaderApp() {
           onPointerEnter={(e) => { if (e.pointerType === 'mouse') setHeaderOpen(true); }}
           aria-label="메뉴 보기"
         />
-        <button className="rd-open-panel" onClick={() => setPanelOpen(true)} aria-label="읽기 도구 열기"><ChevronRight /></button>
+        <button className="rd-open-panel" onClick={() => setPanelOpen((v) => !v)} aria-label={panelOpen ? '읽기 도구 닫기' : '읽기 도구 열기'} aria-expanded={panelOpen}>
+          {panelOpen ? <ChevronLeft /> : <ChevronRight />}
+        </button>
         <StatusPill gazeState={gazeDot} handState={handDot} chip={chip} warn={faceLost} onClick={() => setPanelOpen(true)} />
         {faceLost && <FaceToast />}
         {faceLost && !faceCardClosed && !peek && <FaceGuideCard onClose={() => setFaceCardClosed(true)} />}
@@ -656,6 +675,7 @@ export default function PdfReaderApp() {
         <ReaderPanel
           open={panelOpen}
           onClose={() => setPanelOpen(false)}
+          onHome={() => { closeChrome(); goHome(); }}
           handDebugRef={handDebugRef}
           page={page}
           total={totalPages}
@@ -689,7 +709,7 @@ export default function PdfReaderApp() {
       {gazeOn && !calibrating && <GazeHeatLayer controller={gaze.controller} options={READING_HEATMAP} />}
       {hasDoc && gazeOn && !calibrating && input.phase === 'idle' && edge && <div className={`edge-glow ${edge}`} aria-hidden="true" />}
       {(input.phase === 'adjusting' || input.phase === 'result' || flowNotice) && (
-        <div className="flow-guide" role="status">
+        <div className={`flow-guide${input.phase === 'idle' ? '' : ' is-gesture'}`} role="status">
           {input.phase === 'result' ? GUIDE.result : input.phase === 'adjusting' ? GUIDE[input.target?.level ?? 'word'] : flowNotice}
         </div>
       )}

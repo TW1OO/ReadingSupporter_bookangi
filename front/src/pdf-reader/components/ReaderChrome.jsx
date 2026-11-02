@@ -15,7 +15,7 @@ export function ReaderHeader({ open, title, dark, onHide, onOpenFile, onToggleTh
         <span className="rd-doc-title">/ {title}</span>
       </button>
       <div className="rd-header-actions">
-        <button className="rd-ghost" onClick={onOpenFile}><FolderPlus /> 파일 열기</button>
+        <button className="rd-ghost" onClick={onOpenFile} aria-label="파일 열기"><FolderPlus /> 파일 열기</button>
         <button className="rd-icon" onClick={onToggleTheme} aria-label={dark ? '밝은 화면' : '어두운 화면'}>{dark ? <Sun /> : <Moon />}</button>
         <button className={`rd-icon boxed${menuOpen ? ' on' : ''}`} onClick={onMenuToggle} aria-label="메뉴" aria-expanded={menuOpen}><More /></button>
       </div>
@@ -47,12 +47,14 @@ function Toggle({ label, checked, onChange }) {
 }
 
 // 왼쪽 읽기 도구 패널. PDF 는 쪽 미리보기도 함께 보여 준다.
-export function ReaderPanel({ open, onClose, hand, gaze, mouse, canPeek, onPeek, page, total, pdfDoc, onPageSelect, status, handDebugRef }) {
+export function ReaderPanel({ open, onClose, onHome, hand, gaze, mouse, canPeek, onPeek, page, total, pdfDoc, onPageSelect, status, handDebugRef }) {
   return (
     <aside className={`rd-panel${open ? ' open' : ''}`} aria-hidden={!open}>
       <div className="rd-panel-head">
         <b>읽기 도구</b>
-        <button className="rd-icon" onClick={onClose} aria-label="읽기 도구 닫기"><ChevronLeft /></button>
+        <button className="rd-icon rd-panel-close" onClick={onClose} aria-label="읽기 도구 닫기"><ChevronLeft /></button>
+        {/* 휴대폰에서는 왼쪽 위 단추가 접기를 맡고, 이 자리는 홈으로 쓴다 (styles.css) */}
+        <button className="rd-panel-home" onClick={onHome}>홈</button>
       </div>
       <div className="rd-panel-card">
         <div className="rd-camera-note">
@@ -156,11 +158,12 @@ export function CameraPeek({ getStream, onClose }) {
 // 단어 조정 단추. 키보드가 없는 터치 기기에서만 보인다 (styles.css). 제스처와 같은 이벤트를 보낸다.
 export function TouchAdjustBar({ level, onMove, onBack, onConfirm, onCancel }) {
   const unit = level === 'sentence' ? '문장' : '단어';
+  // 휴대폰에서는 한 줄에 들어가도록 뒷말을 숨긴다 (styles.css)
   return (
     <div className="rd-adjust" role="toolbar" aria-label={`${unit} 조정`}>
-      <button onClick={() => onMove(-1)}><ChevronLeft /> 이전 {unit}</button>
-      <button onClick={() => onMove(1)}>다음 {unit} <ChevronRight /></button>
-      {level !== 'sentence' && <button onClick={onBack}>문장 바꾸기</button>}
+      <button onClick={() => onMove(-1)} aria-label={`이전 ${unit}`}><ChevronLeft /> <span>이전<i> {unit}</i></span></button>
+      <button onClick={() => onMove(1)} aria-label={`다음 ${unit}`}><span>다음<i> {unit}</i></span> <ChevronRight /></button>
+      {level !== 'sentence' && <button onClick={onBack} aria-label="문장 바꾸기"><span>문장<i> 바꾸기</i></span></button>}
       <button className="primary" onClick={onConfirm}><Check size={18} /> 확정</button>
       <button onClick={onCancel}><Close size={18} /> 취소</button>
     </div>
