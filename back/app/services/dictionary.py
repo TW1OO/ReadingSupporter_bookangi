@@ -1,4 +1,5 @@
 import httpx
+import json
 from app.config import settings
 
 DICT_API_URL = "https://opendict.korean.go.kr/api/search"
@@ -26,26 +27,46 @@ async def fetch_dictionary_meaning(keyword: str) -> dict:
                 
                 if items:
                     meanings = []
-                    
+                    is_first_origin = True  # 첫 번째 한자어 그룹 여부 체크
+
                     for item in items:
+                        if len(meanings) >= 6:
+                            break
+
                         raw_word = item.get("word", keyword)
                         clean_word = raw_word.replace("^", "").replace("-", "").strip()
                         
-                        # 입력한 키워드와 완전히 일치하는 표제어만 추출
+                        # 키워드가 정확히 일치하는 표제어만 처리
                         if clean_word == keyword:
-                            sense = item.get("sense", [{}])[0] if isinstance(item.get("sense"), list) else item.get("sense", {})
+                            senses = item.get("sense", [])
+                            if isinstance(senses, dict):
+                                senses = [senses]
+
+                            # 첫 번째 한자어 그룹: 최대 3개까지 수집
+                            if is_first_origin:
+                                for sense in senses[:3]:
+                                    if len(meanings) >= 6:
+                                        break
+                                    meanings.append({
+                                        "word": clean_word,
+                                        "origin": sense.get("origin", ""),
+                                        "pos": sense.get("pos", ""),
+                                        "definition": sense.get("definition", "뜻풀이가 없습니다.")
+                                    })
+                                if senses:
+                                    is_first_origin = False  # 다음 한자어부터는 1개씩만 수집
                             
-                            meanings.append({
-                                "word": clean_word,
-                                "pos": sense.get("pos", ""),
-                                "definition": sense.get("definition", "뜻풀이가 없습니다.")
-                            })
-                            
-                            # 일치하는 항목을 최대 6개까지 찾으면 반복 종료
-                            if len(meanings) == 6:
-                                break
-                    
-                    # 완전 일치하는 단어의 뜻풀이가 하나라도 존재하는 경우
+                            # 두 번째 이후 한자어 그룹: 가장 대표 뜻 1개만 수집
+                            else:
+                                if senses:
+                                    sense = senses[0]
+                                    meanings.append({
+                                        "word": clean_word,
+                                        "origin": sense.get("origin", ""),
+                                        "pos": sense.get("pos", ""),
+                                        "definition": sense.get("definition", "뜻풀이가 없습니다.")
+                                    })
+
                     if meanings:
                         return {
                             "origin_word": keyword,
