@@ -8,3 +8,5 @@ __pycache__/
 !.env.example
 front/public/mediapipe/wasm/
 .DS_Store
+# 시연 PDF (저작권이 있어 저장소에 두지 않는다)
+front/public/demo/

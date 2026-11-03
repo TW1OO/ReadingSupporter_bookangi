@@ -290,7 +290,10 @@ body,#root{height:100dvh}
   .home-card{display:flex;flex-direction:column}
   .home-card .sample-row{order:-1;flex-direction:column;align-items:stretch;gap:8px;margin:0 0 18px;padding:0;border-top:0;text-align:center}
   .home-card .sample-row button{min-height:48px;background:var(--brand);border-color:var(--brand);color:var(--panel);font-weight:700}
+  .home-card .sample-row:not(.is-pdf){margin-bottom:12px}
 }
+/* 시연 PDF 줄은 기사 줄 바로 아래에 붙인다 */
+.sample-row.is-pdf{margin-top:10px;padding-top:0;border-top:0}
 
 /* ───────── 휴대폰 세로 ───────── */
 @media (max-width:767px){
