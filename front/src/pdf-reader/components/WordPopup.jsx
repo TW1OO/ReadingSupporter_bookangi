@@ -108,8 +108,19 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
     body = <p className="popup-loading">뜻과 예문을 찾는 중…</p>;
   } else if (entry.error) {
     body = '사전 뜻을 가져오지 못했어요. 웹 검색으로 더 확인할 수 있습니다.';
-  } else if (tab === 'meaning') {
-    body = <p>1. {entry.part ? `[${entry.part}] ` : ''}{entry.meaning}</p>;
+  } else if (tab === 'meaning') { //1103 태완 수정.(뜻이 최대 6개까지 나오도록 수정. 뜻이 3개 나올 경우, 3개까지만 나오게끔 하였으나, 확인 필요함.)
+    const meanings = (entry.meanings ?? [])
+      .filter((meaning) => typeof meaning === 'string' && meaning.trim())
+      .slice(0, 6);
+
+    body = meanings.length > 0
+      ? meanings.map((meaning, i) => (
+          <p key={i}>
+            {i + 1}. {i === 0 && entry.part ? `[${entry.part}] ` : ''}
+            {meaning}
+          </p>
+        ))
+      : <p>사전에서 뜻을 찾지 못했어요.</p>;
   } else if (tab === 'explain') {
     body = !ai
       ? <p className="popup-loading">문장 해설을 준비하는 중…</p>
