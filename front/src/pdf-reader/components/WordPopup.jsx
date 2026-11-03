@@ -14,7 +14,7 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
   const tab = choice;
   const [entry, setEntry] = useState(null);
   const [ai, setAi] = useState({}); // { sentence, search } 탭을 처음 열 때 하나씩 불러옵니다
-  const [pos, setPos] = useState({ left: 0, top: 0, width: 360 });
+  const [pos, setPos] = useState({ left: 0, top: 0, width: 400 });
   const [copied, setCopied] = useState('idle'); // idle | done | fail
 
   const sentence = selection?.scope === 'sentence'; // 문장 해설: 사전 조회 없이 해설만 보여 준다
@@ -56,7 +56,7 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
   useLayoutEffect(() => {
     if (!selection || !ref.current) return;
     const margin = 12;
-    const width = Math.min(360, window.innerWidth - margin * 2);
+    const width = Math.min(400, window.innerWidth - margin * 2); // 글자를 키운 만큼 넓힌다
     const height = ref.current.offsetHeight || 250;
     const { rect } = selection;
     const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));

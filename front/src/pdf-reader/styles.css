@@ -184,6 +184,11 @@ body.dark .home-error{background:#3d2420;color:#f2c4bd}
 body.dark button.primary,body.dark #openBtn{color:#1d1c1a}
 .word-popup .popup-tabs button.active{border-color:var(--brand);color:var(--brand-ink)}
 .popup-sentence{font-size:15px;line-height:1.6;font-weight:600;color:var(--ink);word-break:keep-all}
+/* 뜻·해설 본문은 읽는 글이라 크게, 흐린 회색 대신 본문색으로 */
+.popup-content{font-size:16px;line-height:1.7;word-break:keep-all}
+.popup-content p{margin:8px 0}
+.popup-content .example{color:inherit;opacity:.88;padding-left:11px}
+.popup-meta{font-size:13px}
 .epub-page ::selection{background:#8a5a2b40}
 .logo svg{width:22px;height:22px}
 
