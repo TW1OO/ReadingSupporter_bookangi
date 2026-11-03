@@ -196,3 +196,24 @@ def explain_word(surface: str, context: str | None) -> str:
         elif ev["type"] == "error":
             raise RuntimeError(ev["message"])
     return "".join(parts).strip()
+
+
+def is_ready() -> bool:
+    return _state == "ready" and _llm is not None
+
+
+def complete(system: str, user: str, *, temperature: float = 0.3, max_tokens: int = 256) -> str:
+    """system/user 한 쌍으로 단발 생성한다. 블로킹 호출이라 라우터에서는 threadpool 로 부른다."""
+    req = ChatRequest(
+        messages=[ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)],
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=False,
+    )
+    parts: list[str] = []
+    for ev in stream_chat(req, threading.Event()):
+        if ev["type"] == "token":
+            parts.append(ev["text"])
+        elif ev["type"] == "error":
+            raise RuntimeError(ev["message"])
+    return "".join(parts).strip()
