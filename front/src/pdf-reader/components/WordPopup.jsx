@@ -14,7 +14,6 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
   const tab = choice;
   const [entry, setEntry] = useState(null);
   const [ai, setAi] = useState(null); // 해설·예시 탭을 처음 열 때 불러옵니다
-  const [pos, setPos] = useState({ left: 0, top: 0, width: 360 });
   const [copied, setCopied] = useState('idle'); // idle | done | fail
 
   const sentence = selection?.scope === 'sentence'; // 문장 해설: 사전 조회 없이 해설만 보여 준다
@@ -43,19 +42,37 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
       .then((r) => { if (aiRequested.current === selection) setAi(r); });
   }, [needAi, selection, entry]);
 
-  // 선택 영역 근처에 배치 (아래 우선, 공간이 없으면 위)
+  // 하단 고정 시트: 높이를 CSS 변수로 알려 글 영역 아래쪽에 여백을 만들고(styles.css),
+  // 선택한 단어가 시트 뒤로 가려지면 그만큼만 스크롤해서 보이게 한다.
+  const baseScroll = useRef(0);
   useLayoutEffect(() => {
-    if (!selection || !ref.current) return;
-    const margin = 12;
-    const width = Math.min(360, window.innerWidth - margin * 2);
-    const height = ref.current.offsetHeight || 250;
-    const { rect } = selection;
-    const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
-    let top = rect.bottom + 10;
-    if (top + height > window.innerHeight - margin) top = rect.top - height - 10;
-    top = Math.max(margin, Math.min(top, window.innerHeight - height - margin));
-    setPos({ left, top, width });
-  }, [selection, entry, tab, ai]);
+    baseScroll.current = stageRef.current?.scrollTop ?? 0;
+  }, [selection, stageRef]);
+  useLayoutEffect(() => {
+    if (!selection || !ref.current) return undefined;
+    const root = document.documentElement;
+    const reveal = () => {
+      const stage = stageRef.current;
+      const rect = selection.rect;
+      if (!stage || !rect || !ref.current) return;
+      const limit = window.innerHeight - ref.current.offsetHeight - 16;
+      const target = baseScroll.current + Math.max(0, rect.bottom - limit);
+      if (target > stage.scrollTop) stage.scrollTo({ top: target, behavior: 'smooth' });
+    };
+    const apply = () => {
+      root.style.setProperty('--word-popup-h', `${ref.current?.offsetHeight ?? 0}px`);
+      reveal();
+    };
+    document.body.classList.add('has-word-popup');
+    apply();
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(apply) : null;
+    ro?.observe(ref.current);
+    return () => {
+      ro?.disconnect();
+      document.body.classList.remove('has-word-popup');
+      root.style.removeProperty('--word-popup-h');
+    };
+  }, [selection, stageRef]);
 
   // 바깥 클릭 / Esc 로 닫기 (PDF 영역 클릭은 새 선택을 위해 유지)
   useEffect(() => {
@@ -108,18 +125,13 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
     body = <p className="popup-loading">뜻과 예문을 찾는 중…</p>;
   } else if (entry.error) {
     body = '사전 뜻을 가져오지 못했어요. 웹 검색으로 더 확인할 수 있습니다.';
-  } else if (tab === 'meaning') { //1103 태완 수정.(뜻이 최대 6개까지 나오도록 수정. 뜻이 3개 나올 경우, 3개까지만 나오게끔 하였으나, 확인 필요함.)
+  } else if (tab === 'meaning') { // 1번: 뜻 최대 6개 (entry.meanings 는 dictionary.js adapt 가 항상 문자열 배열로 맞춰 준다)
     const meanings = (entry.meanings ?? [])
-      .filter((meaning) => typeof meaning === 'string' && meaning.trim())
+      .filter((m) => typeof m === 'string' && m.trim())
       .slice(0, 6);
 
     body = meanings.length > 0
-      ? meanings.map((meaning, i) => (
-          <p key={i}>
-            {i + 1}. {i === 0 && entry.part ? `[${entry.part}] ` : ''}
-            {meaning}
-          </p>
-        ))
+      ? meanings.map((m, i) => <p key={i}>{meanings.length > 1 ? `${i + 1}. ` : ''}{m}</p>)
       : <p>사전에서 뜻을 찾지 못했어요.</p>;
   } else if (tab === 'explain') {
     body = !ai
@@ -141,7 +153,6 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
     <div className="word-sheet-backdrop" onClick={onClose} aria-hidden="true" />
     <div
       ref={ref} className="word-popup" role="dialog" aria-label="선택 단어 정보"
-      style={{ left: pos.left, top: pos.top, width: pos.width }}
     >
       <div className="popup-head">
         <div>
@@ -163,7 +174,8 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
         ))}
       </div>}
 
-      <div className="popup-content">{body}</div>
+      {/* LLM(3번) 답만 길면 슬라이드(스크롤)로 넘겨 본다. 1·2번은 그대로 펼쳐 보인다 */}
+      <div className={`popup-content${!sentence && tab === 'search' ? ' llm-slide' : ''}`}>{body}</div>
 
       <div className="popup-actions">
         <button onClick={searchWeb}>검색어 복사/검색 ↗</button>
