@@ -14,9 +14,11 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
   const tab = choice;
   const [entry, setEntry] = useState(null);
   const [ai, setAi] = useState({}); // { sentence, search } 탭을 처음 열 때 하나씩 불러옵니다
+  const [pos, setPos] = useState({ left: 0, top: 0, width: 360 });
   const [copied, setCopied] = useState('idle'); // idle | done | fail
 
   const sentence = selection?.scope === 'sentence'; // 문장 해설: 사전 조회 없이 해설만 보여 준다
+  const bottom = !sentence && tab === 'search'; // LLM 검색(3번)만 하단 시트, 1·2번은 선택 글 근처 팝업(기존)
 
   // 선택이 바뀌면 이전 LLM 결과를 비운다
   useEffect(() => { setAi({}); }, [selection]);
@@ -51,17 +53,29 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
     });
   }, [needAi, mode, selection, entry, sentence]);
 
-  // 하단 고정 시트: 높이를 CSS 변수로 알려 글 영역 아래쪽에 여백을 만들고(styles.css),
-  // 선택한 단어가 시트 뒤로 가려지면 그만큼만 스크롤해서 보이게 한다.
+  // 선택 영역 근처에 배치 (아래 우선, 공간이 없으면 위) — 1·2번 탭(기존 방식). LLM 검색은 하단 시트라 건너뜁니다.
+  useLayoutEffect(() => {
+    if (!selection || bottom || !ref.current) return;
+    const margin = 12;
+    const width = Math.min(360, window.innerWidth - margin * 2);
+    const height = ref.current.offsetHeight || 250;
+    const { rect } = selection;
+    const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
+    let top = rect.bottom + 10;
+    if (top + height > window.innerHeight - margin) top = rect.top - height - 10;
+    top = Math.max(margin, Math.min(top, window.innerHeight - height - margin));
+    setPos({ left, top, width });
+  }, [selection, entry, tab, ai, bottom]);
+
+  // LLM 검색(3번) 하단 시트: 높이를 CSS 변수로 알려 글 영역 아래쪽에 여백을 만들고(styles.css),
+  // 선택한 단어가 시트 뒤로 가려지면 그만큼만 스크롤해서 보이게 한다. 다른 탭으로 가면 원래대로 돌아온다.
   const baseScroll = useRef(0);
   useLayoutEffect(() => {
-    baseScroll.current = stageRef.current?.scrollTop ?? 0;
-  }, [selection, stageRef]);
-  useLayoutEffect(() => {
-    if (!selection || !ref.current) return undefined;
+    if (!selection || !bottom || !ref.current) return undefined;
     const root = document.documentElement;
+    const stage = stageRef.current;
+    baseScroll.current = stage?.scrollTop ?? 0;
     const reveal = () => {
-      const stage = stageRef.current;
       const rect = selection.rect;
       if (!stage || !rect || !ref.current) return;
       const limit = window.innerHeight - ref.current.offsetHeight - 16;
@@ -81,7 +95,7 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
       document.body.classList.remove('has-word-popup');
       root.style.removeProperty('--word-popup-h');
     };
-  }, [selection, stageRef]);
+  }, [selection, bottom, stageRef]);
 
   // 바깥 클릭 / Esc 로 닫기 (PDF 영역 클릭은 새 선택을 위해 유지)
   useEffect(() => {
@@ -161,7 +175,8 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
     {/* 휴대폰 시트의 바깥을 누르면 닫는다. 글자로 전달되어 새 단어가 잡히지 않게 막는다 (styles.css) */}
     <div className="word-sheet-backdrop" onClick={onClose} aria-hidden="true" />
     <div
-      ref={ref} className="word-popup" role="dialog" aria-label="선택 단어 정보"
+      ref={ref} className={`word-popup${bottom ? ' is-bottom' : ''}`} role="dialog" aria-label="선택 단어 정보"
+      style={bottom ? undefined : { left: pos.left, top: pos.top, width: pos.width }}
     >
       <div className="popup-head">
         <div>
@@ -183,8 +198,8 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
         ))}
       </div>}
 
-      {/* LLM(3번) 답만 길면 슬라이드(스크롤)로 넘겨 본다. 1·2번은 그대로 펼쳐 보인다 */}
-      <div className={`popup-content${!sentence && tab === 'search' ? ' llm-slide' : ''}`}>{body}</div>
+      {/* LLM 검색(3번)만 하단 시트 + 슬라이드(스크롤). 1·2번은 기존 팝업 그대로 */}
+      <div className={`popup-content${bottom ? ' llm-slide' : ''}`}>{body}</div>
 
       <div className="popup-actions">
         <button onClick={searchWeb}>검색어 복사/검색 ↗</button>

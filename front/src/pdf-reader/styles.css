@@ -312,11 +312,10 @@ body,#root{height:100dvh}
   .rd-pager{height:48px;bottom:calc(8px + env(safe-area-inset-bottom))}
 }
 
-/* ───────── 단어 팝업: 모든 기기에서 하단 고정 시트 ─────────
-   - 선택 글 근처에 떠서 글을 가리던 방식 대신 화면 아래에 붙인다.
-   - 열려 있는 동안 글 영역 아래에 시트 높이만큼 여백을 두어(--word-popup-h) 글이 시트 위로 올라올 수 있게 한다.
-   - 슬라이드(스크롤)는 LLM 3번 탭(.llm-slide)에만 쓴다. */
-.word-popup{
+/* ───────── LLM 검색(3번 탭)만 하단 시트. 1·2번 탭은 기존 팝업(선택 글 근처) 그대로 ─────────
+   - 시트가 열려 있는 동안 글 영역 아래에 시트 높이만큼 여백(--word-popup-h)을 둬서 글이 가려지지 않게 한다.
+   - 슬라이드(스크롤)는 LLM 답(.llm-slide)에만 쓴다. */
+.word-popup.is-bottom{
   position:fixed;left:50%!important;top:auto!important;right:auto;bottom:0;
   width:min(720px,100vw)!important;max-width:none;margin:0;
   max-height:min(52dvh,460px);overflow:auto;
@@ -325,16 +324,16 @@ body,#root{height:100dvh}
   background:var(--panel);color:var(--ink);box-shadow:0 -10px 40px #2a221233;
   transform:translateX(-50%);animation:word-popup-up .18s ease-out;
 }
-.word-popup::before{content:"";position:absolute;left:50%;top:8px;width:40px;height:4px;margin-left:-20px;border-radius:2px;background:var(--line)}
-.word-popup .popup-word{color:var(--ink)}
-.word-popup .popup-actions button{flex:1}
+.word-popup.is-bottom::before{content:"";position:absolute;left:50%;top:8px;width:40px;height:4px;margin-left:-20px;border-radius:2px;background:var(--line)}
+.word-popup.is-bottom .popup-word{color:var(--ink)}
+.word-popup.is-bottom .popup-actions button{flex:1}
 @keyframes word-popup-up{from{transform:translate(-50%,100%)}to{transform:translate(-50%,0)}}
-@media (prefers-reduced-motion:reduce){.word-popup{animation:none}}
+@media (prefers-reduced-motion:reduce){.word-popup.is-bottom{animation:none}}
 
-/* 글이 시트 뒤에 가리지 않도록 스크롤 영역 아래에 여백 */
+/* 하단 시트가 열려 있는 동안 글이 시트 뒤에 가리지 않도록 스크롤 영역 아래에 여백 */
 body.has-word-popup .rd-reader #stage{padding-bottom:calc(var(--word-popup-h,0px) + 24px)!important}
 
-/* LLM(3번 탭) 답: 길면 슬라이드(스크롤)로 넘겨 본다 */
+/* LLM 검색 답: 길면 슬라이드(스크롤)로 넘겨 본다 */
 .popup-content.llm-slide{
   max-height:min(220px,30dvh);overflow-y:auto;overscroll-behavior:contain;
   padding-right:8px;scrollbar-width:thin;scrollbar-color:var(--brand,#2563eb) transparent;
