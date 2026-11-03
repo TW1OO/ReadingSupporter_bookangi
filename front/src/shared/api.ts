@@ -8,10 +8,14 @@ export interface LookupResult {
 	examples?: string[];
 }
 
-// back/app/schemas.py 의 ExplainResponse 와 동일. status 가 unavailable 이면 아직 LLM 연동 전.
+// back/app/schemas.py 의 ExplainRequest / ExplainResponse 와 동일. status 가 unavailable 이면 LLM 이 꺼져 있거나 실패한 것.
+// sentence: 문장 해설(explanation, 60자 이내) / search: LLM 검색(search, 200자 이내)
+export type ExplainMode = 'sentence' | 'search';
+
 export interface ExplainResult {
 	status: 'ready' | 'unavailable';
 	explanation: string | null;
+	search: string | null;
 	examples: string[];
 }
 

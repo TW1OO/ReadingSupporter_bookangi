@@ -22,11 +22,14 @@ class ExplainRequest(BaseModel):
     lemma: str | None = None
     meaning: str | None = None
     context: str | None = None
+    # sentence: 문장 해설(탭 2, 60자 이내) / search: LLM 검색(탭 3, 200자 이내)
+    mode: Literal["sentence", "search"] = "sentence"
 
 
 class ExplainResponse(BaseModel):
     status: Literal["ready", "unavailable"]
-    explanation: str | None = None
+    explanation: str | None = None  # mode=sentence 의 결과
+    search: str | None = None  # mode=search 의 결과
     examples: list[str] = []
 
 
