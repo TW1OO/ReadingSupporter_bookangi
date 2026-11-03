@@ -29,6 +29,9 @@ const FIT_SLACK_Y = 20; // 쪽 맞춤 때 세로 스크롤 막대가 생기지 �
 const DWELL_KEY = 'bookangi.dwellLock';
 const MOUSE_KEY = 'bookangi.mousePick';
 const CHIP_MS = 1500;
+const DEMO_PDF_PATH = '/demo/smart-city-ontology.pdf';
+const DEMO_PDF_ZOOM = 1.51; // 시연 PDF는 제목부터 첫 단락까지 읽기 좋은 크기로 연다(쪽 너비를 넘지 않게)
+const DEMO_PDF_NAME = '스마트 시티 메타데이터 이질성 통합을 위한 개방형 표준 기반 디지털 트윈 센서 온톨로지.pdf';
 const DWELL_MS = 1000; // 시선이 이만큼 머물면 문장 지정
 const GAZE_WINDOW_MS = 500; // 엄지를 들 때 이 시간의 시선 평균을 쓴다
 const RELOCK_MS = 2000; // 닫은 직후에는 시선 멈춤으로 다시 지정하지 않는다
@@ -314,7 +317,7 @@ export default function PdfReaderApp() {
   }, [handEnabled, targetFromGaze, onPalmHeld]);
 
   // ---------- 파일 ----------
-  const loadFile = useCallback(async (file) => {
+  const loadFile = useCallback(async (file, zoom = 0) => {
     if (!isPdfFile(file)) {
       const msg = 'PDF 파일을 선택해 주세요.';
       setNotice(msg); setStatus(msg);
@@ -328,6 +331,7 @@ export default function PdfReaderApp() {
       setArticle(null);
       setPdfDoc(pdf);
       needsFit.current = true;
+      fixedZoom.current = zoom;
       setFileName(file.name);
       setFileUrl(URL.createObjectURL(file));
       setPage(1);
@@ -360,6 +364,20 @@ export default function PdfReaderApp() {
     }
     const file = await fetchRemoteFile(url);
     const err = await loadFile(file);
+    if (err) { setNotice(''); throw new Error(err); }
+  }, [loadFile]);
+
+  // 시연 PDF. 저작권이 있는 논문이라 저장소에 두지 않고 front/public/demo/ 에 직접 넣는다(.gitignore).
+  const openDemoPdf = useCallback(async () => {
+    setStatus('시연 PDF 불러오는 중…');
+    let blob = null;
+    try {
+      const res = await fetch(DEMO_PDF_PATH);
+      if (res.ok) blob = await res.blob();
+    } catch { /* 아래에서 안내 */ }
+    const head = blob ? String.fromCharCode(...new Uint8Array(await blob.slice(0, 5).arrayBuffer())) : '';
+    if (head !== '%PDF-') throw new Error(`시연 PDF가 없습니다. front/public${DEMO_PDF_PATH} 에 파일을 넣어 주세요.`);
+    const err = await loadFile(new File([blob], DEMO_PDF_NAME, { type: 'application/pdf' }), DEMO_PDF_ZOOM);
     if (err) { setNotice(''); throw new Error(err); }
   }, [loadFile]);
 
@@ -429,6 +447,7 @@ export default function PdfReaderApp() {
     const id = setTimeout(() => setChip(''), CHIP_MS);
     return () => clearTimeout(id);
   }, [chip]);
+  const fixedZoom = useRef(0); // 0 이 아니면 쪽 맞춤 대신 이 배율로 연다(시연 PDF)
   const autoFit = useRef(true); // 직접 확대·축소하기 전까지는 화면 크기가 바뀌면 다시 맞춘다
   const zoom = (delta) => {
     autoFit.current = false;
@@ -447,7 +466,9 @@ export default function PdfReaderApp() {
     const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + FIT_SLACK_Y;
     // 휴대폰 가로 화면은 높이가 낮아 쪽 전체를 맞추면 글자를 읽을 수 없다. 터치로 스크롤하므로 너비에 맞춘다.
     const widthOnly = isPhone() && w > h;
-    setScale(clamp(pageFitScale({ stageW: w, stageH: h, padX, padY, pageW: vp.width, pageH: vp.height, widthOnly }), SCALE.min, SCALE.fitMax));
+    const fit = { stageW: w, stageH: h, padX, padY, pageW: vp.width, pageH: vp.height };
+    if (fixedZoom.current) return setScale(clamp(Math.min(fixedZoom.current, pageFitScale({ ...fit, widthOnly: true })), SCALE.min, SCALE.max));
+    setScale(clamp(pageFitScale({ ...fit, widthOnly }), SCALE.min, SCALE.fitMax));
   };
   const fitPageRef = useRef(fitPage);
   fitPageRef.current = fitPage;
@@ -572,7 +593,7 @@ export default function PdfReaderApp() {
       <>
         <div className="app">
           <Header hasDoc={false} fileName="" dark={dark} onHome={goHome} onOpen={chooseFile} onInfo={setInfo} onToggleTheme={() => setDark((v) => !v)} />
-          <Landing dragging={dragging} notice={notice} onChooseFile={chooseFile} onOpenUrl={openUrl} onInfo={setInfo} />
+          <Landing dragging={dragging} notice={notice} onChooseFile={chooseFile} onOpenUrl={openUrl} onOpenDemoPdf={openDemoPdf} onInfo={setInfo} />
         </div>
         {popups}
       </>

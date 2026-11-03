@@ -1,8 +1,9 @@
 import { useState } from 'react';
 
 const DEMO_ARTICLE_URL = 'https://www.busan.com/view/busan/view.php?code=2026110112320909454';
+const DEMO_PDF = 'demo-pdf'; // 주소가 아니라 앱에 들어 있는 시연 PDF를 연다
 
-export default function Landing({ dragging, notice, onChooseFile, onOpenUrl, onInfo }) {
+export default function Landing({ dragging, notice, onChooseFile, onOpenUrl, onOpenDemoPdf, onInfo }) {
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -17,7 +18,7 @@ export default function Landing({ dragging, notice, onChooseFile, onOpenUrl, onI
     setLoading(true);
     setError('');
     try {
-      await onOpenUrl(value);
+      await (value === DEMO_PDF ? onOpenDemoPdf() : onOpenUrl(value));
     } catch (err) {
       setError(err?.message || '불러오지 못했습니다.');
     } finally {
@@ -64,6 +65,10 @@ export default function Landing({ dragging, notice, onChooseFile, onOpenUrl, onI
           <div className="sample-row">
             <span>시연 자료: 부산일보 기사 (원문에서 글자만 불러옵니다)</span>
             <button type="button" disabled={loading} onClick={() => open(DEMO_ARTICLE_URL)}>시연 자료 열기</button>
+          </div>
+          <div className="sample-row is-pdf">
+            <span>시연 PDF: 동아대 디지털 트윈 센서 온톨로지 논문 (멀티미디어학회 논문지, 2024)</span>
+            <button type="button" disabled={loading} onClick={() => open(DEMO_PDF)}>시연 PDF 열기</button>
           </div>
         </section>
 
