@@ -13,35 +13,44 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
   const ref = useRef(null);
   const tab = choice;
   const [entry, setEntry] = useState(null);
-  const [ai, setAi] = useState(null); // 해설·예시 탭을 처음 열 때 불러옵니다
+  const [ai, setAi] = useState({}); // { sentence, search } 탭을 처음 열 때 하나씩 불러옵니다
   const [pos, setPos] = useState({ left: 0, top: 0, width: 360 });
   const [copied, setCopied] = useState('idle'); // idle | done | fail
 
   const sentence = selection?.scope === 'sentence'; // 문장 해설: 사전 조회 없이 해설만 보여 준다
+
+  // 선택이 바뀌면 이전 LLM 결과를 비운다
+  useEffect(() => { setAi({}); }, [selection]);
 
   // 단어 조회
   useEffect(() => {
     if (!selection || sentence) return;
     let cancelled = false;
     setEntry(null);
-    setAi(null);
     lookupWord(selection.word, selection.context)
       .then((e) => !cancelled && setEntry(e))
       .catch(() => !cancelled && setEntry({ error: true }));
     return () => { cancelled = true; };
   }, [selection, sentence]);
 
-  // 문맥 해설·예문 (로컬 LLM). 느릴 수 있어 뜻과 따로, 필요할 때만 요청합니다.
-  const needAi = !!selection && (sentence || (!!entry && !entry.error)) && (tab === 'explain' || tab === 'search');
-  const aiRequested = useRef(null);
+  // 로컬 LLM. 느릴 수 있어 뜻과 따로, 탭을 열 때만 그 탭 몫을 요청합니다.
+  // explain 탭 → 문장 해설(60자), search 탭 → LLM 검색(200자). 같은 선택에서 같은 모드는 한 번만 부릅니다.
+  const mode = sentence || tab === 'explain' ? 'sentence' : tab === 'search' ? 'search' : null;
+  const needAi = !!selection && !!mode && (sentence || (!!entry && !entry.error));
+  const aiRequested = useRef({ selection: null, modes: new Set() });
   useEffect(() => {
-    if (!needAi || aiRequested.current === selection) return;
-    aiRequested.current = selection;
-    explainWord(sentence
+    if (!needAi) return;
+    const req = aiRequested.current;
+    if (req.selection !== selection) { req.selection = selection; req.modes = new Set(); }
+    if (req.modes.has(mode)) return;
+    req.modes.add(mode);
+    const base = sentence
       ? { surface: selection.word, context: selection.word }
-      : { surface: selection.word, lemma: entry.lemma, meaning: entry.meaning, context: selection.context })
-      .then((r) => { if (aiRequested.current === selection) setAi(r); });
-  }, [needAi, selection, entry]);
+      : { surface: selection.word, lemma: entry.lemma, meaning: entry.meaning, context: selection.context };
+    explainWord({ ...base, mode }).then((r) => {
+      if (aiRequested.current.selection === selection) setAi((prev) => ({ ...prev, [mode]: r }));
+    });
+  }, [needAi, mode, selection, entry, sentence]);
 
   // 선택 영역 근처에 배치 (아래 우선, 공간이 없으면 위)
   useLayoutEffect(() => {
@@ -97,11 +106,11 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
 
   let body;
   if (sentence) {
-    body = !ai
+    body = !ai.sentence
       ? <p className="popup-loading">문장 해설을 준비하는 중…</p>
-      : ai.explanation
-        ? <p className="example">“{ai.explanation}”</p>
-        : '문장 해설은 로컬 LLM 연동 후 제공됩니다.';
+      : ai.sentence.explanation
+        ? <p className="example">{ai.sentence.explanation}</p>
+        : '문장 해설을 불러오지 못했어요. 로컬 LLM이 켜져 있는지 확인해 주세요.';
   } else if (!tab) {
     body = <p className="popup-loading">{isPhone() ? '위에서 볼 내용을 고르세요.' : '손가락 1·2·3으로 메뉴를 고르세요. 주먹으로 취소합니다.'}</p>;
   } else if (!entry) {
@@ -122,17 +131,17 @@ export default function WordPopup({ selection, stageRef, onClose, choice, onChoi
         ))
       : <p>사전에서 뜻을 찾지 못했어요.</p>;
   } else if (tab === 'explain') {
-    body = !ai
+    body = !ai.sentence
       ? <p className="popup-loading">문장 해설을 준비하는 중…</p>
-      : ai.explanation
-        ? <p className="example">“{ai.explanation}”</p>
-        : '문장 해설은 로컬 LLM 연동 후 제공됩니다. 웹 검색에서 찾아보세요.';
+      : ai.sentence.explanation
+        ? <p className="example">{ai.sentence.explanation}</p>
+        : '문장 해설을 불러오지 못했어요. 웹 검색에서 찾아보세요.';
   } else {
-    body = !ai
+    body = !ai.search
       ? <p className="popup-loading">LLM 검색 중…</p>
-      : ai.examples?.length
-        ? ai.examples.slice(0, 5).map((ex, i) => <p key={i} className="example">“{ex}”</p>)
-        : 'LLM 검색은 로컬 LLM 연동 후 제공됩니다. 웹 검색에서 찾아보세요.';
+      : ai.search.search
+        ? <p className="example" style={{ whiteSpace: 'pre-wrap' }}>{ai.search.search}</p>
+        : 'LLM 검색을 불러오지 못했어요. 웹 검색에서 찾아보세요.';
   }
 
   return (
