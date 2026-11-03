@@ -3,6 +3,10 @@
 시선(아이트래킹)과 손동작(핸드트래킹)으로 전자책 속 모르는 단어를 찾아 주는 한국어 독서 보조 서비스입니다.
 2026 DevDay(동아대 소프트웨어혁신센터) AI·SW 기초 트랙 출품작이며, 팀 Book항이(6명)가 만듭니다.
 
+**바로 사용하기: https://bookangi-btu04.apps.dauai.org/**
+
+PC와 패드에서는 Chrome으로 접속해 카메라를 허용하면 시선과 손으로 읽을 수 있고, 휴대폰에서는 터치로 읽습니다.
+
 ## 사용 흐름
 1. PDF를 열거나 웹 글 주소를 입력하면 뷰어가 열리고, 시선 보정 안내와 손 인식이 시작됩니다.
 2. OK 표시를 하고, 점 13개를 바라보며 손을 4번씩 펴서(또는 클릭해서) 시선을 보정합니다.
@@ -14,7 +18,22 @@
 시선 오차가 약 100px로 커서, 시선은 문장과 후보를 대략 잡는 데만 쓰고 정확한 단어는 제스처로 고릅니다. 시선을 쓸 수 없으면 마우스와 키보드로 대신할 수 있습니다. 자세한 기준은 [docs/INTERACTION.md](docs/INTERACTION.md)에 있습니다.
 
 ## 실행
-Node.js와 Python이 필요합니다. 카메라는 Chrome에서 `localhost` 또는 HTTPS 주소로 접속할 때만 쓸 수 있습니다.
+
+### 배포 사이트
+설치 없이 **https://bookangi-btu04.apps.dauai.org/** 에서 바로 쓸 수 있습니다.
+
+| 주소 | 화면 |
+|---|---|
+| [/](https://bookangi-btu04.apps.dauai.org/) | PDF·웹 글 리더 (기본) |
+| [/?gaze](https://bookangi-btu04.apps.dauai.org/?gaze) | 시선 단독 실험 화면 |
+| [/?llm](https://bookangi-btu04.apps.dauai.org/?llm) | 로컬 LLM 테스트 화면 |
+| [/?legacy](https://bookangi-btu04.apps.dauai.org/?legacy) | 초기 샘플 화면 |
+
+- HTTPS 주소라 Chrome에서 카메라를 허용하면 시선과 손 인식을 쓸 수 있습니다.
+- 처음 접속하면 브라우저가 카메라 권한을 묻습니다. 부스 PC와 패드에서는 미리 허용해 두세요.
+
+### 로컬에서 실행
+개발하거나 배포 사이트를 쓸 수 없을 때 씁니다. Node.js와 Python이 필요하고, 카메라는 Chrome에서 `localhost` 또는 HTTPS 주소로 접속할 때만 쓸 수 있습니다.
 
 ```bash
 # 프론트 (http://localhost:5173)
@@ -32,11 +51,7 @@ cp .env.example .env          # 키 입력
 uvicorn app.main:app --reload
 ```
 
-| 주소 | 화면 |
-|---|---|
-| `/` | PDF·웹 글 리더 (기본) |
-| `/?gaze` | 시선 단독 실험 화면 |
-| `/?legacy` | 초기 샘플 화면 |
+로컬에서도 같은 주소 뒤에 `/?gaze`, `/?llm`, `/?legacy`를 붙여 각 화면을 엽니다.
 
 ## 테스트
 ```bash
